@@ -55,6 +55,9 @@ func (a *app) singleView(c *ui.Context) {
 		c.OnWindowShortcut(0, ui.KeyLeft, func() { a.stepSingle(-1) })
 		c.OnWindowShortcut(0, ui.KeyRight, func() { a.stepSingle(1) })
 	}
+	if a.tag >= 0 && a.tag < len(a.history) {
+		c.OnWindowShortcut(0, ui.KeyEscape, func() { a.closeTag(a.tag) })
+	}
 }
 
 // singleSource is the image the single image view shows: the decoded
@@ -279,16 +282,25 @@ func (a *app) resetSingleZoom() {
 // historyTags are the photos the single image view opened, on the left of
 // its header, as tags that show one again. A tag outlives the folder the
 // view shows, so opening an image elsewhere keeps the ones opened before.
+// Its close icon on the right drops it.
 func (a *app) historyTags(c *ui.Context) {
 	for j, path := range a.history {
 		j, name := j, filepath.Base(path)
+		on := j == a.tag
 		c.Key(j)
-		btn := ui.Button(c, name).FontSize(12).BorderWidth(0).MaxWidth(140).
-			Padding(6, 14).Radius(0).Tooltip(name).
-			OnClick(func() { a.selectTag(j) })
-		if j == a.tag {
-			btn.Selected(true)
-		}
+		ui.Row(c).AlignItems(ui.Stretch).Gap(0).Children(func() {
+			ui.Button(c, name).FontSize(12).BorderWidth(0).MaxWidth(140).
+				Padding(6, 14).Radius(0).Tooltip(name).
+				Selected(on).
+				OnClick(func() { a.selectTag(j) })
+			ui.Button(c, "").Label("Close "+name).Tooltip("Close this tag").
+				BorderWidth(0).Padding(6, 8).Radius(0).
+				Selected(on).
+				OnClick(func() { a.closeTag(j) }).
+				Children(func() {
+					ui.Icon(c, closeIcon).Size(10, 10)
+				})
+		})
 	}
 }
 
@@ -357,6 +369,34 @@ func (a *app) setSingle(i int) {
 		}
 	}
 	a.loadSingle()
+}
+
+// closeTag drops tag j from the header and the view kept with it.
+// Closing the current tag shows the one opened before it, or the one
+// after it when it was the first, and returns to the gallery when none
+// is left. Closing another tag leaves the photo the view shows.
+func (a *app) closeTag(j int) {
+	if j < 0 || j >= len(a.history) {
+		return
+	}
+	a.history = append(a.history[:j], a.history[j+1:]...)
+	a.tagViews = append(a.tagViews[:j], a.tagViews[j+1:]...)
+	switch {
+	case a.pendingTag == j:
+		a.pendingTag = -1
+	case a.pendingTag > j:
+		a.pendingTag--
+	}
+	switch {
+	case len(a.history) == 0:
+		a.tag = -1
+		a.singleDragging = false
+		a.showGallery()
+	case j == a.tag:
+		a.selectTag(max(j-1, 0))
+	case a.tag > j:
+		a.tag--
+	}
 }
 
 // addTag adds p to the header as the current tag, letting go of the

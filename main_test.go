@@ -542,6 +542,128 @@ func TestArrowsRenameCurrentTagOnly(t *testing.T) {
 	}
 }
 
+func TestClosingTags(t *testing.T) {
+	root := t.TempDir()
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
+	a := syncApp(root)
+	tt := ui.NewTester(a.view, 1000, 640)
+
+	// Show alpha, then beta from the gallery: each opens a tag.
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("File tree"); err != nil {
+		t.Fatal(err)
+	}
+	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
+	tt.Frame()
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 2 || a.tag != 1 {
+		t.Fatalf("the history is %v, tag %d, want both photos tagged at the second", a.history, a.tag)
+	}
+
+	// Each tag shows its close icon on its right.
+	name, ok := tt.Find("alpha.png")
+	if !ok {
+		t.Fatalf("alpha.png's tag is not shown: %q", tt.Texts())
+	}
+	close, ok := tt.Find("Close alpha.png")
+	if !ok {
+		t.Fatalf("alpha.png's close icon is not shown: %q", tt.Texts())
+	}
+	if close.X < name.X+name.W-1 || close.Y > 50 {
+		t.Errorf("the close icon is at %v, want the tag's right in the header", close)
+	}
+
+	// Closing another tag drops it, with its view, and leaves the photo
+	// the view shows.
+	if err := tt.Click("Close alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 1 || a.history[0] != a.photos[1].path {
+		t.Errorf("closing alpha.png's tag leaves %v, want beta.png alone", a.history)
+	}
+	if len(a.tagViews) != 1 {
+		t.Errorf("%d tag views for %d tags", len(a.tagViews), len(a.history))
+	}
+	if a.tag != 0 || a.single != 1 {
+		t.Errorf("closing alpha.png's tag shows image %d with tag %d, want beta.png", a.single, a.tag)
+	}
+	if _, ok := tt.Find("alpha.png"); ok {
+		t.Errorf("the closed tag still shows: %q", tt.Texts())
+	}
+
+	// Closing the current tag, the last, returns to the gallery.
+	if err := tt.Click("Close beta.png"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 0 || a.tag != -1 {
+		t.Errorf("closing the last tag leaves %v with tag %d", a.history, a.tag)
+	}
+	if a.mode != viewGallery {
+		t.Errorf("closing the last tag shows view %d, want the gallery", a.mode)
+	}
+}
+
+func TestEscapeClosesCurrentTag(t *testing.T) {
+	root := t.TempDir()
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
+	a := syncApp(root)
+	tt := ui.NewTester(a.view, 1000, 640)
+
+	// Show alpha, then beta from the gallery: each opens a tag.
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("File tree"); err != nil {
+		t.Fatal(err)
+	}
+	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
+	tt.Frame()
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 2 || a.tag != 1 {
+		t.Fatalf("the history is %v, tag %d, want both photos tagged at the second", a.history, a.tag)
+	}
+
+	// Escape closes the current tag, showing the one opened before it.
+	tt.Key(0, ui.KeyEscape)
+	if len(a.history) != 1 || a.history[0] != a.photos[0].path {
+		t.Errorf("Escape leaves %v, want alpha.png alone", a.history)
+	}
+	if a.tag != 0 || a.single != 0 {
+		t.Errorf("Escape shows image %d with tag %d, want alpha.png", a.single, a.tag)
+	}
+	if _, ok := tt.Find("beta.png"); ok {
+		t.Errorf("Escape kept beta.png's tag: %q", tt.Texts())
+	}
+
+	// Closing the current tag when it is the first shows the next one.
+	if err := tt.Click("File tree"); err != nil {
+		t.Fatal(err)
+	}
+	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
+	tt.Frame()
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if a.tag != 0 {
+		t.Fatalf("choosing alpha.png's tag shows tag %d, want the first", a.tag)
+	}
+	tt.Key(0, ui.KeyEscape)
+	if len(a.history) != 1 || a.history[0] != a.photos[1].path || a.tag != 0 || a.single != 1 {
+		t.Errorf("Escape leaves %v with tag %d showing image %d, want beta.png", a.history, a.tag, a.single)
+	}
+}
+
 func TestHistoryTagsKeepTheLatest(t *testing.T) {
 	a := newApp(t.TempDir())
 	for i := 0; i < historyLimit+3; i++ {
