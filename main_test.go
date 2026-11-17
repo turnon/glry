@@ -23,6 +23,17 @@ func syncApp(root string) *app {
 	return a
 }
 
+// singleViewNow is how the single image view shows its current tag's
+// photo.
+func singleViewNow(t *testing.T, a *app) *tagView {
+	t.Helper()
+	view := a.currentTagView()
+	if view == nil {
+		t.Fatal("the single image view has no tag to show")
+	}
+	return view
+}
+
 // sidebarHas reports whether s shows in the left sidebar, not the gallery.
 func sidebarHas(a *app, tt *ui.Tester, s string) bool {
 	r, ok := tt.Find(s)
@@ -31,7 +42,14 @@ func sidebarHas(a *app, tt *ui.Tester, s string) bool {
 
 func writePNG(t *testing.T, path string, c color.Color) {
 	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	writePNGSize(t, path, 40, 30, c)
+}
+
+// writePNGSize writes a plain picture of the size given, whose aspect its
+// view fits.
+func writePNGSize(t *testing.T, path string, w, h int, c color.Color) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(img, img.Bounds(), &image.Uniform{C: c}, image.Point{}, draw.Src)
 	var b bytes.Buffer
 	if err := png.Encode(&b, img); err != nil {
@@ -537,6 +555,9 @@ func TestHistoryTagsKeepTheLatest(t *testing.T) {
 	if a.tag != historyLimit-1 {
 		t.Errorf("the current tag is %d, want the last", a.tag)
 	}
+	if len(a.tagViews) != len(a.history) {
+		t.Errorf("%d tag views for %d tags", len(a.tagViews), len(a.history))
+	}
 	if a.history[0] != a.photos[3].path {
 		t.Errorf("the history starts at %q, want the first kept photo", a.history[0])
 	}
@@ -551,5 +572,253 @@ func TestSingleViewWithoutImages(t *testing.T) {
 	}
 	if !tt.HasText("No images in this folder") {
 		t.Errorf("an empty folder has no single image state: %q", tt.Texts())
+	}
+}
+
+func TestSingleImageZoomsAndPans(t *testing.T) {
+	root := t.TempDir()
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	a := syncApp(root)
+	var ctx *ui.Context
+	tt := ui.NewTester(func(c *ui.Context) { ctx = c; a.view(c) }, 1000, 640)
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	room := a.singleRef.Bounds(ctx)
+	if room.W <= 0 || room.H <= 0 {
+		t.Fatalf("the single image view has no room: %v", room)
+	}
+	cx, cy := room.X+room.W/2, room.Y+room.H/2
+	view := singleViewNow(t, a)
+
+	if view.zoom != minSingleZoom || view.scroll.X != 0 || view.scroll.Y != 0 {
+		t.Fatalf("the photo shows at %v scrolled to %v, want it fitting", view.zoom, view.scroll)
+	}
+	// Fitting, there is nowhere to scroll and no bar.
+	tt.Press(cx-100, cy-100)
+	tt.Move(cx-60, cy-60)
+	tt.Release(cx-60, cy-60)
+	if view.scroll.X != 0 || view.scroll.Y != 0 || view.scroll.MaxX != 0 || view.scroll.MaxY != 0 {
+		t.Errorf("a fitting photo scrolls to %v, with max %v/%v", view.scroll, view.scroll.MaxX, view.scroll.MaxY)
+	}
+
+	// A notch zooms about the pointer: at the center the photo stays
+	// centered in its content.
+	tt.Wheel(cx, cy, 0, -1)
+	if view.zoom != singleZoomStep {
+		t.Fatalf("a notch zooms to %v, want %v", view.zoom, singleZoomStep)
+	}
+	cw, ch, _, _ := singleContentSize(a.singleSource(), view.zoom, room.W, room.H)
+	if want := (cw - room.W) / 2; view.scroll.X != want {
+		t.Errorf("zooming at the center scrolls to %v, want %v", view.scroll.X, want)
+	}
+	if want := (ch - room.H) / 2; view.scroll.Y != want {
+		t.Errorf("zooming at the center scrolls to %v, want %v", view.scroll.Y, want)
+	}
+	// The content exceeds the room, so its scroll bars show and scroll.
+	tt.Frame()
+	if view.scroll.MaxX <= 0 || view.scroll.MaxY <= 0 {
+		t.Fatalf("a zoomed photo does not overflow: max %v/%v", view.scroll.MaxX, view.scroll.MaxY)
+	}
+	tt.Move(room.X+room.W-6, cy)
+	if got := tt.Cursor(); got != ui.CursorDefault {
+		t.Errorf("the scroll bar at the room's edge has cursor %v, want the default", got)
+	}
+	tt.Move(cx, cy)
+
+	// Off center, the photo moves the other way so what showed under the
+	// pointer stays there, and a touchpad's scroll scrolls it.
+	x0 := view.scroll.X
+	tt.Wheel(cx+100, cy, 0, -1)
+	if view.scroll.X <= x0 {
+		t.Errorf("zooming right of the center scrolls to %v, want more than %v", view.scroll.X, x0)
+	}
+	x0, y0 := view.scroll.X, view.scroll.Y
+	tt.Scroll(cx, cy, 0, 50)
+	if view.scroll.Y != y0+50 {
+		t.Errorf("a touchpad's scroll moves to %v, want %v", view.scroll.Y, y0+50)
+	}
+
+	// A drag moves it, as far as its zoom leaves past the room's edges.
+	x0, y0 = view.scroll.X, view.scroll.Y
+	tt.Press(cx+20, cy+20)
+	tt.Move(cx-10, cy)
+	tt.Release(cx-10, cy)
+	if view.scroll.X != x0+30 || view.scroll.Y != y0+20 {
+		t.Errorf("dragging (-30, -20) scrolls to %v/%v, want %v/%v", view.scroll.X, view.scroll.Y, x0+30, y0+20)
+	}
+
+	// A pinch zooms too, and the wheel stops at the limits.
+	zoom := view.zoom
+	tt.Pinch(cx, cy, 2)
+	if view.zoom <= zoom {
+		t.Errorf("a pinch left the zoom at %v", view.zoom)
+	}
+	for range 20 {
+		tt.Wheel(cx, cy, 0, -1)
+	}
+	if view.zoom != maxSingleZoom {
+		t.Errorf("zooming in ends at %v, want %v", view.zoom, maxSingleZoom)
+	}
+	for range 20 {
+		tt.Wheel(cx, cy, 0, 1)
+	}
+	if view.zoom != minSingleZoom || view.scroll.X != 0 || view.scroll.Y != 0 {
+		t.Errorf("zooming out leaves %v scrolled to %v, want it fitting", view.zoom, view.scroll)
+	}
+
+	// A double click fits the photo again.
+	tt.Wheel(cx+80, cy+60, 0, -1)
+	if view.zoom == minSingleZoom {
+		t.Fatal("the wheel did not zoom the photo")
+	}
+	tt.ClickAt(cx, cy)
+	tt.ClickAt(cx, cy)
+	if view.zoom != minSingleZoom || view.scroll.X != 0 || view.scroll.Y != 0 {
+		t.Errorf("a double click leaves %v scrolled to %v, want it fitting", view.zoom, view.scroll)
+	}
+}
+
+func TestSingleImageZoomResetsOnArrows(t *testing.T) {
+	root := t.TempDir()
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
+	a := syncApp(root)
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Wheel(700, 400, 0, -1)
+	view := singleViewNow(t, a)
+	if view.zoom == minSingleZoom {
+		t.Fatal("the wheel did not zoom the photo")
+	}
+	// The arrows step to another image, which shows fitting.
+	tt.Key(0, ui.KeyRight)
+	if a.single != 1 {
+		t.Fatalf("the right arrow shows image %d, want beta.png", a.single)
+	}
+	if got := singleViewNow(t, a); got.zoom != minSingleZoom || got.scroll.X != 0 || got.scroll.Y != 0 {
+		t.Errorf("another photo shows at %v scrolled to %v, want it fitting", got.zoom, got.scroll)
+	}
+}
+
+func TestSingleImageScrollsSideways(t *testing.T) {
+	root := t.TempDir()
+	// A wide photo: zoomed, it overflows sideways where it does not up
+	// and down.
+	writePNGSize(t, filepath.Join(root, "wide.png"), 400, 100, color.RGBA{R: 255, A: 255})
+	a := syncApp(root)
+	var ctx *ui.Context
+	tt := ui.NewTester(func(c *ui.Context) { ctx = c; a.view(c) }, 1000, 640)
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	room := a.singleRef.Bounds(ctx)
+	// The room ends inside the window: a bar below it would not show.
+	if room.Y+room.H > 640 {
+		t.Fatalf("the room ends past the window: %v", room)
+	}
+	cx := room.X + room.W/2
+	for range 3 {
+		tt.Wheel(cx, room.Y+room.H/2, 0, -1)
+	}
+	tt.Frame()
+	view := singleViewNow(t, a)
+	if view.scroll.MaxX <= 0 {
+		t.Fatalf("a wide photo does not scroll sideways: max %v/%v", view.scroll.MaxX, view.scroll.MaxY)
+	}
+	if view.scroll.MaxY != 0 {
+		t.Fatalf("a wide photo scrolls up and down too: max %v/%v", view.scroll.MaxX, view.scroll.MaxY)
+	}
+
+	// Its bar takes the pointer at the room's bottom edge, and a drag of
+	// the bar scrolls the photo rather than dragging it.
+	y := room.Y + room.H - 6
+	tt.Move(cx, y)
+	if got := tt.Cursor(); got != ui.CursorDefault {
+		t.Errorf("the horizontal scroll bar has cursor %v, want the default", got)
+	}
+	before := view.scroll.X
+	tt.Press(cx, y)
+	tt.Move(cx+60, y)
+	tt.Release(cx+60, y)
+	if view.scroll.X <= before {
+		t.Errorf("dragging the bar right scrolled from %v to %v", before, view.scroll.X)
+	}
+	if a.singleDragging {
+		t.Error("dragging the bar started a drag of the photo")
+	}
+}
+
+func TestSingleImageKeepsZoomPerTag(t *testing.T) {
+	root := t.TempDir()
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
+	a := syncApp(root)
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Wheel(700, 400, 0, -1)
+	view := singleViewNow(t, a)
+	zoom, scroll := view.zoom, view.scroll.X
+	if zoom == minSingleZoom {
+		t.Fatal("the wheel did not zoom the photo")
+	}
+
+	// Leaving the view and coming back keeps where the photo was.
+	if err := tt.Click("File tree"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if got := singleViewNow(t, a); got.zoom != zoom || got.scroll.X != scroll {
+		t.Errorf("the photo shows at %v scrolled to %v again, want %v/%v", got.zoom, got.scroll.X, zoom, scroll)
+	}
+
+	// Another photo opens as another tag, fitting on its own: the first
+	// tag keeps where its photo was.
+	if err := tt.Click("File tree"); err != nil {
+		t.Fatal(err)
+	}
+	cell, ok := tt.Find("beta.png")
+	if !ok {
+		t.Fatalf("the image cell is not shown: %q", tt.Texts())
+	}
+	x, y := cell.X+cell.W/2, cell.Y+cell.H/2
+	tt.ClickAt(x, y)
+	tt.ClickAt(x, y)
+	if a.single != 1 {
+		t.Fatalf("double clicking beta.png shows image %d, want 1", a.single)
+	}
+	if len(a.tagViews) != 2 {
+		t.Fatalf("%d tags for the two photos", len(a.tagViews))
+	}
+	if got := a.tagViews[0]; got.zoom != zoom || got.scroll.X != scroll {
+		t.Errorf("alpha.png kept at %v scrolled to %v, want %v/%v", got.zoom, got.scroll.X, zoom, scroll)
+	}
+	if got := singleViewNow(t, a); got.zoom != minSingleZoom || got.scroll.X != 0 {
+		t.Errorf("beta.png shows at %v scrolled to %v, want it fitting", got.zoom, got.scroll.X)
+	}
+
+	// Back to a tag, where its photo was is where it shows again.
+	tt.Wheel(700, 400, 0, -1)
+	tt.Wheel(700, 400, 0, -1)
+	betaZoom := singleViewNow(t, a).zoom
+	if err := tt.Click("alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if got := singleViewNow(t, a); got.zoom != zoom || got.scroll.X != scroll {
+		t.Errorf("alpha.png shows at %v scrolled to %v again, want %v/%v", got.zoom, got.scroll.X, zoom, scroll)
+	}
+	if err := tt.Click("beta.png"); err != nil {
+		t.Fatal(err)
+	}
+	if got := singleViewNow(t, a); got.zoom != betaZoom {
+		t.Errorf("beta.png shows at %v again, want %v", got.zoom, betaZoom)
 	}
 }

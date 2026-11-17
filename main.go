@@ -130,6 +130,15 @@ type app struct {
 	singleErr     error
 	singleLoading bool
 
+	// tagViews is how the single image view shows the photo of each
+	// history tag, zoomed and scrolled, in step with history. singleRef is
+	// the room the photo has, and singleDragging tells that the pointer
+	// moves the photo, from singleFrom.
+	tagViews       []tagView
+	singleRef      ui.Handle
+	singleDragging bool
+	singleFrom     ui.Point
+
 	// history is the path of each photo the single image view's header
 	// tags, in the order they opened, and tag is the index of the tag the
 	// view is on. The arrows rename that tag instead of adding one, so two
