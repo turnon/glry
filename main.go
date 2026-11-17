@@ -16,6 +16,7 @@ var (
 	folderIcon       = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>`))
 	openIcon         = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>`))
 	refreshIcon      = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/></svg>`))
+	configIcon       = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="10" r="2"/><circle cx="20" cy="14" r="2"/></svg>`))
 	pictureIcon      = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 4.5-4.5L13 17l2.5-2.5L20 19"/></svg>`))
 	treeIcon         = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2a1 1 0 0 0-.8-.4h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/></svg>`))
 	searchIcon       = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>`))
@@ -42,6 +43,7 @@ type viewMode uint8
 const (
 	viewGallery viewMode = iota
 	viewSingle
+	viewConfig
 )
 
 // thumbMaxPixels is the longest side of the bitmaps the gallery decodes:
@@ -135,6 +137,16 @@ type app struct {
 	history []string
 	tag     int
 
+	// configJSON is the text of the config view's editor, and
+	// configPath is where Save writes it. configErr says what Save could
+	// not read; configStatus says what Save did, and configStatusErr
+	// whether it failed.
+	configJSON      string
+	configPath      string
+	configErr       string
+	configStatus    string
+	configStatusErr bool
+
 	sidebarWidth float32
 	cellWidth    float32
 	cellHeight   float32
@@ -156,6 +168,7 @@ func newApp(root string) *app {
 		thumbSlots:   make(chan struct{}, 4),
 	}
 	a.setCellSize(defaultCellSize())
+	a.configJSON = configJSON(cellSize{width: a.cellWidth, height: a.cellHeight})
 	a.async = func(fn func()) { go fn() }
 	return a
 }
@@ -468,269 +481,20 @@ func (a *app) chooseFolder() {
 	}()
 }
 
-// activateItem opens the chosen gallery item: a folder shows its
-// contents, an image shows alone in the single image view.
-func (a *app) activateItem(c *ui.Context) {
-	if a.chosen < 0 || a.chosen >= len(a.items) {
-		return
-	}
-	item := a.items[a.chosen]
-	if item.dir {
-		a.selectDir(item.path)
-		c.Invalidate()
-		return
-	}
-	if item.photo != nil {
-		a.showPhoto(item.photo)
-		c.Invalidate()
-	}
-}
-
-// showPhoto shows p alone in the single image view.
-func (a *app) showPhoto(p *photo) {
-	for i, candidate := range a.photos {
-		if candidate == p {
-			a.showPhotoAt(i)
-			return
-		}
-	}
-}
-
-// showPhotoAt opens photos[i] in the single image view from the gallery
-// or the rail: its tag becomes the current one, added or found, and the
-// photo is chosen in the gallery.
-func (a *app) showPhotoAt(i int) {
-	if i < 0 || i >= len(a.photos) {
-		return
-	}
-	p := a.photos[i]
-	onTag := a.tag >= 0 && a.tag < len(a.history) && a.history[a.tag] == p.path
-	if !onTag {
-		at := -1
-		for j := len(a.history) - 1; j >= 0; j-- {
-			if a.history[j] == p.path {
-				at = j
-				break
-			}
-		}
-		if at >= 0 {
-			a.tag = at
-		} else {
-			a.addTag(p)
-		}
-	}
-	a.setSingle(i)
-}
-
-// showInTag shows photos[i] in the single image view, renaming the tag
-// the view is on rather than opening another. The arrows step through the
-// folder's images this way, even when another tag shows one of them.
-func (a *app) showInTag(i int) {
-	if i < 0 || i >= len(a.photos) {
-		return
-	}
-	if a.tag < 0 || a.tag >= len(a.history) {
-		a.addTag(a.photos[i])
-	} else {
-		a.history[a.tag] = a.photos[i].path
-	}
-	a.setSingle(i)
-}
-
-// setSingle shows photos[i] in the single image view, and chooses it in
-// the gallery.
-func (a *app) setSingle(i int) {
-	p := a.photos[i]
-	a.mode = viewSingle
-	a.single = i
-	for j, item := range a.items {
-		if item.path == p.path {
-			a.chosen = j
-			break
-		}
-	}
-	a.loadSingle()
-}
-
-// addTag adds p to the header as the current tag, letting go of the
-// oldest tag beyond historyLimit.
-func (a *app) addTag(p *photo) {
-	a.history = append(a.history, p.path)
-	if len(a.history) > historyLimit {
-		a.history = a.history[1:]
-	}
-	a.tag = len(a.history) - 1
-}
-
-// selectTag makes tag j the current one, showing its photo.
-func (a *app) selectTag(j int) {
-	if j < 0 || j >= len(a.history) {
-		return
-	}
-	p := a.historyPhoto(a.history[j])
-	if p == nil {
-		return
-	}
-	for i, candidate := range a.photos {
-		if candidate == p {
-			a.tag = j
-			a.setSingle(i)
-			return
-		}
-	}
-}
-
-// historyPhoto is the photo at path among the folder's, or nil.
-func (a *app) historyPhoto(path string) *photo {
-	for _, p := range a.photos {
-		if p.path == path {
-			return p
-		}
-	}
-	return nil
-}
-
-// clearSingle drops the image the single image view decoded, and any
-// decode still on its way no longer matters.
-func (a *app) clearSingle() {
-	a.singleGen++
-	a.singlePath = ""
-	a.singleImg = nil
-	a.singleErr = nil
-	a.singleLoading = false
-}
-
-// showGallery returns to the tree and the folder's gallery.
-func (a *app) showGallery() {
-	if a.mode == viewGallery {
-		return
-	}
-	a.mode = viewGallery
-	a.clearSingle()
-}
-
-// showSingle shows one image alone, the gallery's chosen photo when it is
-// one and the folder's first otherwise.
-func (a *app) showSingle() {
-	if a.mode == viewSingle {
-		return
-	}
-	a.mode = viewSingle
-	if i := max(a.chosenPhoto(), 0); i < len(a.photos) {
-		a.showPhotoAt(i)
-		return
-	}
-	a.loadSingle() // an empty folder has nothing to show
-}
-
-// stepSingle shows the image delta places from the one shown, within the
-// folder's photos, in the tag that shows it.
-func (a *app) stepSingle(delta int) {
-	n := a.single + delta
-	if n < 0 || n >= len(a.photos) {
-		return
-	}
-	a.showInTag(n)
-}
-
-// chosenPhoto is the index in photos of the chosen gallery item, or -1
-// when it chose a folder or nothing.
-func (a *app) chosenPhoto() int {
-	if a.chosen < 0 || a.chosen >= len(a.items) {
-		return -1
-	}
-	path := a.items[a.chosen].path
-	for i, p := range a.photos {
-		if p.path == path {
-			return i
-		}
-	}
-	return -1
-}
-
-// singlePhoto is the photo the single image view shows, or nil.
-func (a *app) singlePhoto() *photo {
-	if a.single < 0 || a.single >= len(a.photos) {
-		return nil
-	}
-	return a.photos[a.single]
-}
-
-// loadSingle decodes the photo the single image view shows, large enough
-// for the window, on a goroutine. The photograph already in the gallery
-// shows meanwhile, when the grid had asked for its thumbnail.
-func (a *app) loadSingle() {
-	if a.single < 0 || a.single >= len(a.photos) {
-		a.single = 0
-	}
-	p := a.singlePhoto()
-	if p == nil {
-		a.clearSingle()
-		return
-	}
-	if p.path == a.singlePath && (a.singleLoading || a.singleImg != nil) {
-		return // already decoded, or being decoded
-	}
-	a.singlePath = p.path
-	a.singleGen++
-	gen := a.singleGen
-	a.singleImg = nil
-	a.singleErr = nil
-	a.singleLoading = true
-	path := p.path
-	a.async(func() {
-		var (
-			svg           *ui.SVG
-			img           image.Image
-			width, height int
-			err           error
-		)
-		data, rerr := os.ReadFile(path)
-		if rerr != nil {
-			err = rerr
-		} else if isSVG(path) {
-			svg, err = ui.ParseSVG(data)
-			if err == nil {
-				if w, h := ui.ImageSize(svg); w > 0 && h > 0 {
-					width, height = int(w+0.5), int(h+0.5)
-				}
-			}
-		} else {
-			img, width, height, err = decodeThumb(data, singleMaxPixels)
-		}
-		a.post(func() {
-			if gen != a.singleGen {
-				return // another image was chosen meanwhile
-			}
-			a.singleLoading = false
-			if err != nil {
-				log.Printf("decoding %s: %v", path, err)
-				a.singleErr = err
-				return
-			}
-			if svg != nil {
-				a.singleImg = svg
-			} else if img != nil {
-				a.singleImg = ui.NewBitmap(img)
-			}
-			if p.width == 0 || p.height == 0 {
-				p.width, p.height = width, height
-			}
-		})
-	})
-}
-
 // view builds the window: the rail that chooses the view, and beside it
 // the folder's tree and gallery, or one image alone.
 func (a *app) view(c *ui.Context) {
 	ui.Row(c).Fill().Children(func() {
 		a.rail(c)
 		ui.Divider(c)
-		if a.mode == viewSingle {
+		switch a.mode {
+		case viewSingle:
 			a.singleView(c)
-			return
+		case viewConfig:
+			a.configView(c)
+		default:
+			ui.Split(c, &a.sidebarWidth, func() { a.sidebar(c) }, func() { a.gallery(c) }).Fill().SplitReset(250)
 		}
-		ui.Split(c, &a.sidebarWidth, func() { a.sidebar(c) }, func() { a.gallery(c) }).Fill().SplitReset(250)
 	})
 }
 
@@ -740,6 +504,7 @@ func (a *app) rail(c *ui.Context) {
 	ui.Column(c).Width(railWidth).FillHeight().Padding(8, 0).Gap(6).AlignItems(ui.Center).Background(t.Background).Children(func() {
 		a.railButton(c, "File tree", "Show the file tree and gallery", treeIcon, a.mode == viewGallery, a.showGallery)
 		a.railButton(c, "Single image", "Show one image at a time", searchIcon, a.mode == viewSingle, a.showSingle)
+		a.railButton(c, "Config", "Edit the config", configIcon, a.mode == viewConfig, a.showConfig)
 	})
 }
 
@@ -756,253 +521,6 @@ func (a *app) railButton(c *ui.Context, label, tooltip string, icon *ui.SVG, act
 	if !active {
 		btn.TextColor(t.TextMuted)
 	}
-}
-
-// singleView shows one photo of the folder, as large as the window allows.
-func (a *app) singleView(c *ui.Context) {
-	t := c.Theme()
-	p := a.singlePhoto()
-	ui.Column(c).Fill().Background(t.Background).Children(func() {
-		if len(a.history) > 0 {
-			// The tags fill the header's height and touch, as the tabs
-			// of a tab bar do.
-			ui.Row(c).Padding(0, 10).AlignItems(ui.Stretch).Wrap().Children(func() {
-				a.historyTags(c)
-			})
-			ui.Divider(c)
-		}
-		switch {
-		case p == nil:
-			a.galleryMessage(c, "No images in this folder", "Choose a folder with images in the file tree.", false)
-			return
-		case a.singleErr != nil:
-			ui.Column(c).Fill().Center().Gap(8).Children(func() {
-				ui.Icon(c, pictureIcon).Size(42, 42).TextColor(t.TextMuted)
-				ui.Text(c, "Can't open this image").TextColor(t.TextMuted)
-				ui.Text(c, a.singleErr.Error()).FontSize(12).TextColor(t.TextMuted)
-			})
-			return
-		}
-		src := a.singleImg
-		if src == nil {
-			src = p.img // the thumbnail, while the larger one decodes
-		}
-		ui.Column(c).Fill().Center().Padding(12).Children(func() {
-			if src != nil {
-				ui.Image(c, src).Grow(1).FillWidth().Fit(ui.Contain).MinHeight(0)
-			} else {
-				ui.Spinner(c)
-			}
-		})
-	})
-	if p != nil {
-		c.OnWindowShortcut(0, ui.KeyLeft, func() { a.stepSingle(-1) })
-		c.OnWindowShortcut(0, ui.KeyRight, func() { a.stepSingle(1) })
-	}
-}
-
-// historyTags are the photos the single image view opened, on the left of
-// its header, as tags that show one again.
-func (a *app) historyTags(c *ui.Context) {
-	for j, path := range a.history {
-		p := a.historyPhoto(path)
-		if p == nil {
-			continue
-		}
-		j, name := j, p.name
-		c.Key(j)
-		btn := ui.Button(c, name).FontSize(12).BorderWidth(0).MaxWidth(140).
-			Padding(6, 14).Radius(0).Tooltip(name).
-			OnClick(func() { a.selectTag(j) })
-		if j == a.tag {
-			btn.Selected(true)
-		}
-	}
-}
-
-func (a *app) sidebar(c *ui.Context) {
-	t := c.Theme()
-	ui.Column(c).Fill().Background(t.Surface).Children(func() {
-		ui.Row(c).Gap(8).Padding(10, 12).Justify(ui.Center).Children(func() {
-			ui.Button(c, "").Label("Open").Tooltip("Open a folder").BorderWidth(0).OnClick(a.chooseFolder).Children(func() {
-				ui.Icon(c, openIcon).Size(16, 16)
-			})
-			ui.Button(c, "").Label("Refresh").Tooltip("Refresh the folder").BorderWidth(0).OnClick(a.reload).Children(func() {
-				ui.Icon(c, refreshIcon).Size(16, 16)
-			})
-		})
-		ui.Divider(c)
-		outline := ui.Outline(c, &a.tree, []string{a.root}, a.children, func(dir string) {
-			a.treeRow(c, dir)
-		}).Grow(1).Padding(6)
-		if outline.Changed() && a.dirRow >= 0 && a.dirRow < a.tree.Rows() {
-			a.selectDir(a.tree.Item(a.dirRow))
-			c.Invalidate()
-		}
-		a.applyPendingTreeSelection(c)
-	})
-}
-
-func (a *app) treeRow(c *ui.Context, dir string) {
-	t := c.Theme()
-	icon := t.TextMuted
-	if dir == a.selected {
-		icon = t.Accent
-	}
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		ui.Icon(c, folderIcon).Size(14, 14).TextColor(icon)
-		ui.Text(c, rootName(dir)).SingleLine()
-	})
-}
-
-func (a *app) gallery(c *ui.Context) {
-	t := c.Theme()
-	ui.Column(c).Fill().Children(func() {
-		switch {
-		case a.galleryErr != nil:
-			a.galleryMessage(c, "Can't read this folder", a.galleryErr.Error(), false)
-		case a.galleryLoading:
-			a.galleryMessage(c, "Loading images…", "", true)
-		case len(a.items) == 0:
-			a.galleryMessage(c, "This folder is empty", "Choose another folder in the sidebar.", false)
-		default:
-			a.grid.Key = func(i int) any {
-				if i >= 0 && i < len(a.items) {
-					return a.items[i].path
-				}
-				return i
-			}
-			a.grid.Selected = &a.chosen
-			a.grid.Label = func(i int) string {
-				if i >= 0 && i < len(a.items) {
-					return a.items[i].name
-				}
-				return ""
-			}
-			grid := ui.GridView(c, &a.grid, len(a.items), a.cellWidth, a.cellHeight, func(i int) {
-				a.itemCell(c, i)
-			}).Grow(1).Padding(12)
-			if grid.Submitted() {
-				a.activateItem(c)
-			}
-		}
-	})
-	if !a.galleryLoading && a.galleryErr == nil && a.selected != "" {
-		// An overlay keeps the tag in the window's corner while the
-		// gallery scrolls and resizes.
-		ui.Overlay(c, func() {
-			ui.Badge(c, a.imagesTag()).Absolute().Bottom(0).Right(0).
-				Padding(3, 8).Radius(8, 0, 0, 0).
-				Background(t.Surface).TextColor(t.TextMuted).Tooltip("Images and their total size")
-		})
-	}
-}
-
-// imagesTag says how many images the folder shows and how large they are.
-func (a *app) imagesTag() string {
-	var total int64
-	for _, p := range a.photos {
-		total += p.size
-	}
-	return fmt.Sprintf("%s, %s", imageCount(len(a.photos)), byteSize(total))
-}
-
-func (a *app) galleryMessage(c *ui.Context, title, detail string, loading bool) {
-	t := c.Theme()
-	ui.Column(c).Fill().Center().Gap(8).Children(func() {
-		if loading {
-			ui.Spinner(c)
-		} else {
-			ui.Icon(c, pictureIcon).Size(42, 42).TextColor(t.TextMuted)
-		}
-		ui.Text(c, title).TextColor(t.TextMuted)
-		if detail != "" {
-			ui.Text(c, detail).FontSize(12).TextColor(t.TextMuted)
-		}
-	})
-}
-
-func (a *app) itemCell(c *ui.Context, i int) {
-	if i < 0 || i >= len(a.items) {
-		return
-	}
-	item := a.items[i]
-	if item.dir {
-		a.folderCell(c, item.name)
-		return
-	}
-	if item.photo != nil {
-		a.photoCell(c, item.photo)
-	}
-}
-
-// cellMetrics adapts a cell's padding and icon to its configured size.
-func (a *app) cellMetrics() (pad, gap, iconSize float32, showName bool) {
-	pad, gap, iconSize = 8, 6, 32
-	if compact := a.cellWidth < 90 || a.cellHeight < 90; compact {
-		side := min(a.cellWidth, a.cellHeight)
-		pad = max(1, min(6, side/12))
-		gap = max(1, min(4, side/16))
-		iconSize = max(8, min(32, side*0.55))
-	}
-	showName = a.cellHeight >= 34 && a.cellWidth >= 44
-	return
-}
-
-func (a *app) folderCell(c *ui.Context, name string) {
-	t := c.Theme()
-	pad, gap, iconSize, showName := a.cellMetrics()
-	ui.Column(c).Fill().Padding(pad).Gap(gap).Children(func() {
-		ui.Column(c).Grow(1).Center().Children(func() {
-			ui.Icon(c, folderIcon).Size(iconSize, iconSize).TextColor(t.Accent)
-		})
-		if showName {
-			ui.Text(c, name).FontSize(12).SingleLine().TextAlign(ui.Center).FillWidth().Tooltip(name)
-		}
-	})
-}
-
-func (a *app) photoCell(c *ui.Context, p *photo) {
-	if p == nil {
-		return
-	}
-	t := c.Theme()
-	gen := a.galleryGen
-	pad, gap, iconSize, showName := a.cellMetrics()
-	showMeta := a.cellHeight >= 64 && a.cellWidth >= 60
-	ui.Column(c).Fill().Padding(pad).Gap(gap).Children(func() {
-		if p.img != nil {
-			ui.Image(c, p.img).Grow(1).Fit(ui.Contain).MinHeight(0)
-		} else {
-			// A guarded job: only the cells the grid builds, which are
-			// those in view, ask for their thumbnail, and only once.
-			a.requestThumb(gen, p)
-			ui.Column(c).Grow(1).Center().Children(func() {
-				if p.state == thumbFailed && showName {
-					ui.Text(c, "Can't open").FontSize(11).TextColor(t.TextMuted)
-				} else {
-					ui.Icon(c, pictureIcon).Size(iconSize, iconSize).TextColor(t.TextMuted)
-				}
-			})
-		}
-		if showMeta {
-			ui.Column(c).Gap(1).FillWidth().Children(func() {
-				ui.Text(c, photoDimensions(p)).FontSize(10).TextColor(t.TextMuted).SingleLine().TextAlign(ui.Center)
-				ui.Text(c, byteSize(p.size)).FontSize(10).TextColor(t.TextMuted).SingleLine().TextAlign(ui.Center)
-			})
-		}
-		if showName {
-			ui.Text(c, p.name).FontSize(12).SingleLine().TextAlign(ui.Center).FillWidth().Tooltip(p.name)
-		}
-	})
-}
-
-// photoDimensions names a photo's width and height in pixels.
-func photoDimensions(p *photo) string {
-	if p.width > 0 && p.height > 0 {
-		return fmt.Sprintf("%d × %d", p.width, p.height)
-	}
-	return "— × —"
 }
 
 // rootName is the name a directory shows by: its last element, or itself
@@ -1030,13 +548,6 @@ func byteSize(n int64) string {
 		return fmt.Sprintf("%.0f %cB", v, "KMGT"[exp])
 	}
 	return fmt.Sprintf("%.1f %cB", v, "KMGT"[exp])
-}
-
-func imageCount(n int) string {
-	if n == 1 {
-		return "1 image"
-	}
-	return fmt.Sprintf("%d images", n)
 }
 
 // defaultRoot starts at a folder given on the command line, else the
@@ -1067,7 +578,7 @@ func defaultRoot() string {
 
 func main() {
 	a := newApp(defaultRoot())
-	a.setCellSize(loadConfig(configPath()))
+	a.loadSettings(configPath())
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:     "glry",
