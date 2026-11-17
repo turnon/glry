@@ -4,6 +4,7 @@ import (
 	"image"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -16,7 +17,7 @@ func (a *app) singleView(c *ui.Context) {
 		if len(a.history) > 0 {
 			// The tags fill the header's height and touch, as the tabs
 			// of a tab bar do.
-			ui.Row(c).Padding(0, 10).AlignItems(ui.Stretch).Wrap().Children(func() {
+			ui.Row(c).AlignItems(ui.Stretch).Wrap().Children(func() {
 				a.historyTags(c)
 			})
 			ui.Divider(c)
@@ -37,7 +38,7 @@ func (a *app) singleView(c *ui.Context) {
 		if src == nil {
 			src = p.img // the thumbnail, while the larger one decodes
 		}
-		ui.Column(c).Fill().Center().Padding(12).Children(func() {
+		ui.Column(c).Fill().Center().Padding(0, 12, 12, 12).Children(func() {
 			if src != nil {
 				ui.Image(c, src).Grow(1).FillWidth().Fit(ui.Contain).MinHeight(0)
 			} else {
@@ -52,14 +53,11 @@ func (a *app) singleView(c *ui.Context) {
 }
 
 // historyTags are the photos the single image view opened, on the left of
-// its header, as tags that show one again.
+// its header, as tags that show one again. A tag outlives the folder the
+// view shows, so opening an image elsewhere keeps the ones opened before.
 func (a *app) historyTags(c *ui.Context) {
 	for j, path := range a.history {
-		p := a.historyPhoto(path)
-		if p == nil {
-			continue
-		}
-		j, name := j, p.name
+		j, name := j, filepath.Base(path)
 		c.Key(j)
 		btn := ui.Button(c, name).FontSize(12).BorderWidth(0).MaxWidth(140).
 			Padding(6, 14).Radius(0).Tooltip(name).
@@ -146,32 +144,37 @@ func (a *app) addTag(p *photo) {
 	a.tag = len(a.history) - 1
 }
 
-// selectTag makes tag j the current one, showing its photo.
+// selectTag makes tag j the current one, showing its photo. A tag of
+// another folder shows that folder first, and the photo once it loads.
 func (a *app) selectTag(j int) {
 	if j < 0 || j >= len(a.history) {
 		return
 	}
-	p := a.historyPhoto(a.history[j])
-	if p == nil {
+	a.tag = j
+	if dir := filepath.Dir(a.history[j]); dir != a.selected {
+		a.pendingTag = j
+		a.selectDir(dir)
 		return
 	}
-	for i, candidate := range a.photos {
-		if candidate == p {
-			a.tag = j
-			a.setSingle(i)
-			return
-		}
+	if i := a.historyPhotoAt(j); i >= 0 {
+		a.setSingle(i)
+		return
 	}
+	a.pendingTag = j // the folder may still be loading
 }
 
-// historyPhoto is the photo at path among the folder's, or nil.
-func (a *app) historyPhoto(path string) *photo {
-	for _, p := range a.photos {
-		if p.path == path {
-			return p
+// historyPhotoAt is the index in photos of the photo tag j shows, or -1
+// when the folder does not hold it.
+func (a *app) historyPhotoAt(j int) int {
+	if j < 0 || j >= len(a.history) {
+		return -1
+	}
+	for i, p := range a.photos {
+		if p.path == a.history[j] {
+			return i
 		}
 	}
-	return nil
+	return -1
 }
 
 // clearSingle drops the image the single image view decoded, and any

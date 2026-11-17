@@ -408,6 +408,70 @@ func TestSingleViewKeepsHistoryTags(t *testing.T) {
 	}
 }
 
+func TestTagsSurviveOpeningAnotherFolder(t *testing.T) {
+	root := t.TempDir()
+	trips := filepath.Join(root, "Trips")
+	if err := os.Mkdir(trips, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, filepath.Join(trips, "beach.png"), color.RGBA{B: 255, A: 255})
+	a := syncApp(root)
+	tt := ui.NewTester(a.view, 1000, 640)
+
+	// Open alpha.png: it becomes the only tag.
+	alpha := slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "alpha.png" })
+	a.chosen = alpha
+	tt.Frame()
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 1 || a.history[0] != a.photos[0].path {
+		t.Fatalf("the history is %v, want alpha.png alone", a.history)
+	}
+
+	// Choosing another folder and opening its image adds a tag rather
+	// than clearing the ones opened before.
+	if err := tt.Click("File tree"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Trips"); err != nil {
+		t.Fatal(err)
+	}
+	beach := slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beach.png" })
+	a.chosen = beach
+	tt.Frame()
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 2 {
+		t.Fatalf("opening an image in another folder cleared the tags: %v", a.history)
+	}
+	if base := filepath.Base(a.history[0]); base != "alpha.png" {
+		t.Errorf("the first tag is %q, want alpha.png", base)
+	}
+	if base := filepath.Base(a.history[1]); base != "beach.png" {
+		t.Errorf("the second tag is %q, want beach.png", base)
+	}
+	if !tt.HasText("alpha.png") || !tt.HasText("beach.png") {
+		t.Errorf("the header does not show both tags: %q", tt.Texts())
+	}
+
+	// The old tag goes back to its folder and shows its photo.
+	if err := tt.Click("alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if a.selected != root {
+		t.Errorf("choosing alpha.png's tag shows folder %q, want %q", a.selected, root)
+	}
+	if a.single < 0 || a.single >= len(a.photos) || a.photos[a.single].name != "alpha.png" {
+		t.Fatalf("choosing alpha.png's tag shows image %d: %v", a.single, a.photos)
+	}
+	if a.tag != 0 {
+		t.Errorf("the current tag is %d, want alpha.png's", a.tag)
+	}
+}
+
 func TestArrowsRenameCurrentTagOnly(t *testing.T) {
 	root := t.TempDir()
 	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})

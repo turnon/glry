@@ -133,9 +133,11 @@ type app struct {
 	// history is the path of each photo the single image view's header
 	// tags, in the order they opened, and tag is the index of the tag the
 	// view is on. The arrows rename that tag instead of adding one, so two
-	// tags can show the same photo.
-	history []string
-	tag     int
+	// tags can show the same photo. Tags outlive the folder the view shows;
+	// pendingTag is the tag whose photo a loading folder has yet to show.
+	history    []string
+	tag        int
+	pendingTag int
 
 	// configJSON is the text of the config view's editor, and
 	// configPath is where Save writes it. configErr says what Save could
@@ -164,6 +166,7 @@ func newApp(root string) *app {
 		dirsLoading:  map[string]bool{},
 		chosen:       -1,
 		tag:          -1,
+		pendingTag:   -1,
 		sidebarWidth: 250,
 		thumbSlots:   make(chan struct{}, 4),
 	}
@@ -327,10 +330,9 @@ func (a *app) loadImages() {
 	if dir == "" {
 		return
 	}
-	// The photos of the folder left show no more, nor does its image.
+	// The folder left shows no image, though its tags stay, showing the
+	// photos opened so far.
 	a.single = 0
-	a.history = nil
-	a.tag = -1
 	a.clearSingle()
 	a.async(func() {
 		dirs, photos, err := scanGallery(dir)
@@ -348,9 +350,19 @@ func (a *app) loadImages() {
 			a.photos = photos
 			a.buildGalleryItems()
 			a.chosen = -1
+			j := a.pendingTag
+			a.pendingTag = -1
 			if a.mode == viewSingle {
-				// The view waited for the folder: show its first image.
-				if len(a.photos) > 0 {
+				// The view waited for the folder: show the photo its tag
+				// chose, else the one the current tag shows, else the
+				// folder's first image.
+				if a.historyPhotoAt(j) < 0 {
+					j = a.tag
+				}
+				if i := a.historyPhotoAt(j); i >= 0 {
+					a.tag = j
+					a.setSingle(i)
+				} else if len(a.photos) > 0 {
 					a.showPhotoAt(0)
 				} else {
 					a.loadSingle()
