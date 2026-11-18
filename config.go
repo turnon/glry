@@ -19,7 +19,7 @@ const (
 	defaultCellHeight = 176
 )
 
-// cellSize is the size of a gallery cell, in DIPs.
+// cellSize is the size of a grid cell, in DIPs.
 type cellSize struct {
 	width, height float32
 }
@@ -186,7 +186,7 @@ func (a *app) configView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Background(t.Background).Padding(24).Gap(12).Children(func() {
 		ui.Text(c, "Config").FontSize(22).Bold()
-		ui.Text(c, "Edit the gallery's settings as JSON. Cell sizes are in pixels.").FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, "Edit the app's settings as JSON. Cell sizes are in pixels.").FontSize(12).TextColor(t.TextMuted)
 		editor := ui.TextArea(c, &a.configJSON).Label("Config JSON").Grow(1).FillWidth()
 		editor.Error(a.configErr)
 		editor.OnChange(func() {

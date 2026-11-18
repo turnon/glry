@@ -38,18 +38,18 @@ const railWidth = 48
 // memory.
 const singleMaxPixels = 2048
 
-// viewMode is what the window shows beside the rail: the folder's tree
-// and gallery, or one image alone.
+// viewMode is what the window shows beside the rail: the folders view,
+// the search, one image alone, or the config.
 type viewMode uint8
 
 const (
-	viewGallery viewMode = iota
+	viewFolders viewMode = iota
 	viewSearch
 	viewSingle
 	viewConfig
 )
 
-// thumbMaxPixels is the longest side of the bitmaps the gallery decodes:
+// thumbMaxPixels is the longest side of the bitmaps the grid decodes:
 // enough for a cell on a high-density display, small enough that a folder
 // of photos does not hold their full size in memory.
 const thumbMaxPixels = 512
@@ -79,8 +79,9 @@ type photo struct {
 	img        ui.ImageSource
 }
 
-// galleryItem is a folder or an image of the selected folder's gallery.
-type galleryItem struct {
+// folderItem is an item of the folders view: a subfolder or an image of
+// the selected folder.
+type folderItem struct {
 	path, name string
 	dir        bool
 	photo      *photo
@@ -104,28 +105,32 @@ type app struct {
 	dirsLoading map[string]bool
 	tree        ui.OutlineState[string]
 	dirRow      int
-	// pendingTreePath is a folder the gallery chose, which the tree
+	// pendingTreePath is a folder the folders view chose, which the tree
 	// selects once its row is built.
 	pendingTreePath string
 
-	// items is the gallery: the selected folder's subdirectories first,
-	// then its images. photos is those images alone, for the size tag.
-	// galleryGen tells the results of a folder left meanwhile to drop
-	// themselves.
-	items          []galleryItem
+	// items is the folders view's grid: the selected folder's
+	// subdirectories first, then its images. photos is those images
+	// alone, for the size tag. foldersGen tells the results of a folder
+	// left meanwhile to drop themselves.
+	items          []folderItem
 	photos         []*photo
 	thumbOrder     []*photo
-	galleryGen     uint64
-	galleryLoading bool
-	galleryErr     error
+	foldersGen     uint64
+	foldersLoading bool
+	foldersErr     error
 	grid           ui.GridState
 	chosen         int
 
-	// mode chooses between the tree and gallery, the search, the single
-	// image view and the config; single is the index into photos that view
-	// shows, and singleImg its decoded bitmap, which singleGen tells the
+	// mode chooses between the folders view, the search, the single
+	// image view and the config. singlePhotos is the images the single
+	// view's arrows step through, and single the index into them: the
+	// selected folder's photos, or the search results' when a result
+	// opened the view there, so that the folders view keeps its own.
+	// singleImg is the photo's decoded bitmap, which singleGen tells the
 	// results of an image left meanwhile to drop.
 	mode          viewMode
+	singlePhotos  []*photo
 	single        int
 	singleImg     ui.ImageSource
 	singleGen     uint64
@@ -156,8 +161,8 @@ type app struct {
 	// largest page of results seen, which the page count uses. searchResults
 	// is what the service found, with searchTotal how many it counted in
 	// all, and searchGen tells the answer of a search run meanwhile to drop.
-	// searchGrid and searchChosen are the results' gallery, as grid and
-	// chosen are the folder's.
+	// searchGrid and searchChosen are the results' grid, as grid and
+	// chosen are the folders view's.
 	searchURL      string
 	searchQuery    string
 	searchScope    string
@@ -212,7 +217,7 @@ func newApp(root string) *app {
 	return a
 }
 
-// setCellSize sets the size of a gallery cell.
+// setCellSize sets the size of a grid cell.
 func (a *app) setCellSize(size cellSize) {
 	a.cellWidth = size.width
 	a.cellHeight = size.height
@@ -294,7 +299,7 @@ func (a *app) loadChildren(dir string) {
 			a.dirs[dir] = kids
 			a.tree.Generation++
 			if dir == a.selected {
-				a.buildGalleryItems()
+				a.buildFolderItems()
 			}
 		})
 	})
@@ -335,7 +340,7 @@ func (a *app) revealPath(dir string) {
 	}
 }
 
-// applyPendingTreeSelection selects the folder the gallery chose, now that
+// applyPendingTreeSelection selects the folder the folders view chose, now that
 // the outline has built its rows.
 func (a *app) applyPendingTreeSelection(c *ui.Context) {
 	if a.pendingTreePath == "" {
@@ -359,41 +364,42 @@ func (a *app) applyPendingTreeSelection(c *ui.Context) {
 // goroutine.
 func (a *app) loadImages() {
 	dir := a.selected
-	a.galleryGen++
-	gen := a.galleryGen
+	a.foldersGen++
+	gen := a.foldersGen
 	a.items = nil
 	a.photos = nil
 	a.thumbOrder = nil
 	a.grid = ui.GridState{}
 	a.chosen = -1
-	a.galleryErr = nil
-	a.galleryLoading = dir != ""
+	a.foldersErr = nil
+	a.foldersLoading = dir != ""
 	if dir == "" {
 		return
 	}
 	// The folder left shows no image, though its tags stay, showing the
 	// photos opened so far.
+	a.singlePhotos = nil
 	a.single = 0
 	a.clearSingle()
 	a.async(func() {
-		dirs, photos, err := scanGallery(dir)
+		dirs, photos, err := scanFolder(dir)
 		a.post(func() {
-			if gen != a.galleryGen {
+			if gen != a.foldersGen {
 				return // another folder was chosen meanwhile
 			}
-			a.galleryLoading = false
+			a.foldersLoading = false
 			if err != nil {
-				a.galleryErr = err
+				a.foldersErr = err
 				return
 			}
 			a.dirs[dir] = dirs
 			a.tree.Generation++
 			a.photos = photos
-			a.buildGalleryItems()
+			a.buildFolderItems()
 			a.chosen = -1
 			j := a.pendingTag
 			a.pendingTag = -1
-			if a.mode == viewSingle {
+			if a.mode == viewSingle && (j >= 0 || a.singleShowsFolder(dir)) {
 				// The view waited for the folder: show the photo its tag
 				// chose, else the one the current tag shows, else the
 				// folder's first image.
@@ -413,16 +419,16 @@ func (a *app) loadImages() {
 	})
 }
 
-// buildGalleryItems puts the selected folder's subdirectories before its
+// buildFolderItems puts the selected folder's subdirectories before its
 // images.
-func (a *app) buildGalleryItems() {
+func (a *app) buildFolderItems() {
 	dirs := a.dirs[a.selected]
-	a.items = make([]galleryItem, 0, len(dirs)+len(a.photos))
+	a.items = make([]folderItem, 0, len(dirs)+len(a.photos))
 	for _, dir := range dirs {
-		a.items = append(a.items, galleryItem{path: dir, name: rootName(dir), dir: true})
+		a.items = append(a.items, folderItem{path: dir, name: rootName(dir), dir: true})
 	}
 	for _, p := range a.photos {
-		a.items = append(a.items, galleryItem{path: p.path, name: p.name, photo: p})
+		a.items = append(a.items, folderItem{path: p.path, name: p.name, photo: p})
 	}
 }
 
@@ -536,7 +542,7 @@ func (a *app) chooseFolder() {
 }
 
 // view builds the window: the rail that chooses the view, and beside it
-// the folder's tree and gallery, or one image alone.
+// the folders view, the search, one image alone, or the config.
 func (a *app) view(c *ui.Context) {
 	ui.Row(c).Fill().Children(func() {
 		a.rail(c)
@@ -549,7 +555,7 @@ func (a *app) view(c *ui.Context) {
 		case viewConfig:
 			a.configView(c)
 		default:
-			ui.Split(c, &a.sidebarWidth, func() { a.sidebar(c) }, func() { a.gallery(c) }).Fill().SplitReset(250)
+			ui.Split(c, &a.sidebarWidth, func() { a.sidebar(c) }, func() { a.folders(c) }).Fill().SplitReset(250)
 		}
 	})
 }
@@ -558,7 +564,7 @@ func (a *app) view(c *ui.Context) {
 func (a *app) rail(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Width(railWidth).FillHeight().Padding(8, 0).Gap(6).AlignItems(ui.Center).Background(t.Background).Children(func() {
-		a.railButton(c, "File tree", "Show the file tree and gallery", treeIcon, a.mode == viewGallery, a.showGallery)
+		a.railButton(c, "Folders", "Show folders and their images", treeIcon, a.mode == viewFolders, a.showFolders)
 		a.railButton(c, "Search", "Search the folder's images", searchIcon, a.mode == viewSearch, a.showSearch)
 		a.railButton(c, "Single image", "Show one image at a time", eyeIcon, a.mode == viewSingle, a.showSingle)
 		a.railButton(c, "Config", "Edit the config", configIcon, a.mode == viewConfig, a.showConfig)

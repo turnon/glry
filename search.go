@@ -16,7 +16,7 @@ import (
 )
 
 // The search view asks a local search service which images match a query,
-// within a folder scope, and shows what it finds as the gallery does.
+// within a folder scope, and shows what it finds as the folders view does.
 const (
 	searchEndpoint = "http://localhost:8500"
 	searchTimeout  = 20 * time.Second
@@ -51,7 +51,7 @@ func (a *app) showSearch() {
 }
 
 // searchView searches the folder tree's images and shows the results as a
-// gallery.
+// grid.
 func (a *app) searchView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
@@ -161,15 +161,15 @@ func (a *app) searchPages() int {
 
 // searchResultsView shows what the search found: a message for a search on its
 // way, one that failed or one that found nothing, and otherwise the images
-// as a gallery.
+// as the folders view does.
 func (a *app) searchResultsView(c *ui.Context) {
 	t := c.Theme()
 	switch {
 	case a.searchLoading:
-		a.galleryMessage(c, "Searching…", "", true)
+		a.gridMessage(c, "Searching…", "", true)
 		return
 	case a.searchErr != "":
-		a.galleryMessage(c, "Can't search", a.searchErr, false)
+		a.gridMessage(c, "Can't search", a.searchErr, false)
 		return
 	case a.searchResults == nil:
 		ui.Column(c).Fill().Center().Gap(8).Children(func() {
@@ -178,7 +178,7 @@ func (a *app) searchResultsView(c *ui.Context) {
 		})
 		return
 	case len(a.searchResults) == 0:
-		a.galleryMessage(c, "No images found", "Try another query or scope.", false)
+		a.gridMessage(c, "No images found", "Try another query or scope.", false)
 		return
 	}
 	gen := a.searchGen
@@ -242,8 +242,8 @@ func (a *app) searchCell(c *ui.Context, gen uint64, i int) {
 	})
 }
 
-// openSearchResult shows the chosen result alone in the single image view,
-// opening its folder first when that is not the one shown.
+// openSearchResult shows the chosen result alone, stepping through the
+// results with the arrows: the folders view keeps the folder it shows.
 func (a *app) openSearchResult(c *ui.Context) {
 	i := a.searchChosen
 	if i < 0 || i >= len(a.searchResults) {
@@ -253,23 +253,38 @@ func (a *app) openSearchResult(c *ui.Context) {
 	if p == nil {
 		return
 	}
-	a.mode = viewSingle
-	a.clearSingle()
-	// A tag the view opened before shows the photo again, as choosing it
-	// from the gallery does.
+	// The view steps through the results, not the folder's images, so
+	// that opening one here leaves the folders view as it was.
+	photos := make([]*photo, 0, len(a.searchResults))
 	at := -1
+	for _, result := range a.searchResults {
+		if result.photo == nil {
+			continue
+		}
+		if result.photo == p {
+			at = len(photos)
+		}
+		photos = append(photos, result.photo)
+	}
+	if at < 0 {
+		return
+	}
+	// A tag the view opened before shows the photo again, as choosing it
+	// from the folders view does.
+	a.clearSingle()
+	tag := -1
 	for j := len(a.history) - 1; j >= 0; j-- {
 		if a.history[j] == p.path {
-			at = j
+			tag = j
 			break
 		}
 	}
-	if at >= 0 {
-		a.tag = at
+	if tag >= 0 {
+		a.tag = tag
 	} else {
 		a.addTag(p)
 	}
-	a.selectTag(a.tag)
+	a.setSingleIn(photos, at)
 	c.Invalidate()
 }
 

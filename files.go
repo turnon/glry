@@ -43,9 +43,9 @@ func scanDirs(dir string) ([]string, error) {
 	return dirs, nil
 }
 
-// scanGallery lists a directory's visible subdirectories and images,
-// each sorted by name, for the tree and the gallery in one read.
-func scanGallery(dir string) ([]string, []*photo, error) {
+// scanFolder lists a directory's visible subdirectories and images,
+// each sorted by name, for the tree and the folders view in one read.
+func scanFolder(dir string) ([]string, []*photo, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, err

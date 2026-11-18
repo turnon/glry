@@ -18,22 +18,24 @@ const (
 	singleZoomStep = 1.25
 )
 
-// singleView shows one photo of the folder, as large as the window allows.
+// singleView shows one photo, of the folder or the search results,
+// as large as the window allows.
 func (a *app) singleView(c *ui.Context) {
 	t := c.Theme()
 	p := a.singlePhoto()
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		if len(a.history) > 0 {
 			// The tags fill the header's height and touch, as the tabs
-			// of a tab bar do.
-			ui.Row(c).AlignItems(ui.Stretch).Wrap().Children(func() {
+			// of a tab bar do, over the face the tags not showing have,
+			// so that the header is theirs and the one showing.
+			ui.Row(c).AlignItems(ui.Stretch).Wrap().Background(t.Surface).Children(func() {
 				a.historyTags(c)
 			})
 			ui.Divider(c)
 		}
 		switch {
 		case p == nil:
-			a.galleryMessage(c, "No images in this folder", "Choose a folder with images in the file tree.", false)
+			a.gridMessage(c, "No images in this folder", "Choose a folder with images in the file tree.", false)
 			return
 		case a.singleErr != nil:
 			ui.Column(c).Fill().Center().Gap(8).Children(func() {
@@ -329,9 +331,9 @@ func (a *app) showPhoto(p *photo) {
 	}
 }
 
-// showPhotoAt opens photos[i] in the single image view from the gallery
-// or the rail: its tag becomes the current one, added or found, and the
-// photo is chosen in the gallery.
+// showPhotoAt opens photos[i] in the single image view from the folders
+// view or the rail: its tag becomes the current one, added or found, and
+// the photo is chosen in the folders view.
 func (a *app) showPhotoAt(i int) {
 	if i < 0 || i >= len(a.photos) {
 		return
@@ -355,41 +357,66 @@ func (a *app) showPhotoAt(i int) {
 	a.setSingle(i)
 }
 
-// showInTag shows photos[i] in the single image view, renaming the tag
-// the view is on rather than opening another. The arrows step through the
-// folder's images this way, even when another tag shows one of them.
+// showInTag shows the images[i] the view steps through in the single
+// image view, renaming the tag the view is on rather than opening another.
+// The arrows step through them this way, even when another tag shows one
+// of them.
 func (a *app) showInTag(i int) {
-	if i < 0 || i >= len(a.photos) {
+	if i < 0 || i >= len(a.singlePhotos) {
 		return
 	}
 	if a.tag < 0 || a.tag >= len(a.history) {
-		a.addTag(a.photos[i])
+		a.addTag(a.singlePhotos[i])
 	} else {
-		a.history[a.tag] = a.photos[i].path
+		a.history[a.tag] = a.singlePhotos[i].path
 	}
-	a.setSingle(i)
+	a.setSingleIn(a.singlePhotos, i)
 }
 
-// setSingle shows photos[i] in the single image view, and chooses it in
-// the gallery. It shows it as the current tag showed it: only stepping to
-// another image with the arrows fits it again.
+// setSingle shows photos[i] of the folder in the single image view, and
+// chooses it in the folders view. It shows it as the current tag showed
+// it: only stepping to another image with the arrows fits it again.
 func (a *app) setSingle(i int) {
+	if i < 0 || i >= len(a.photos) {
+		return
+	}
+	a.setSingleIn(a.photos, i)
 	p := a.photos[i]
-	a.mode = viewSingle
-	a.single = i
 	for j, item := range a.items {
 		if item.path == p.path {
 			a.chosen = j
 			break
 		}
 	}
+}
+
+// setSingleIn shows list[i] in the single image view, whose arrows step
+// through list: the folder's photos, or the search results' when a result
+// opened the view there, so that the folders view keeps the folder it
+// shows.
+func (a *app) setSingleIn(list []*photo, i int) {
+	if i < 0 || i >= len(list) {
+		return
+	}
+	a.mode = viewSingle
+	a.singlePhotos = list
+	a.single = i
 	a.loadSingle()
+}
+
+// singleShowsFolder reports whether the single image view steps through
+// dir's photos: the photo of the tag it is on is there.
+func (a *app) singleShowsFolder(dir string) bool {
+	if a.tag < 0 || a.tag >= len(a.history) {
+		return true
+	}
+	return filepath.Dir(a.history[a.tag]) == dir
 }
 
 // closeTag drops tag j from the header and the view kept with it.
 // Closing the current tag shows the one opened before it, or the one
-// after it when it was the first, and returns to the gallery when none
-// is left. Closing another tag leaves the photo the view shows.
+// after it when it was the first, and returns to the folders view when
+// none is left. Closing another tag leaves the photo the view shows.
 func (a *app) closeTag(j int) {
 	if j < 0 || j >= len(a.history) {
 		return
@@ -406,7 +433,7 @@ func (a *app) closeTag(j int) {
 	case len(a.history) == 0:
 		a.tag = -1
 		a.singleDragging = false
-		a.showGallery()
+		a.showFolders()
 	case j == a.tag:
 		a.selectTag(max(j-1, 0))
 	case a.tag > j:
@@ -471,7 +498,7 @@ func (a *app) clearSingle() {
 	a.singleLoading = false
 }
 
-// showSingle shows one image alone, the gallery's chosen photo when it is
+// showSingle shows one image alone, the folders view's chosen photo when it is
 // one and the folder's first otherwise.
 func (a *app) showSingle() {
 	if a.mode == viewSingle {
@@ -491,14 +518,14 @@ func (a *app) showSingle() {
 // watch.
 func (a *app) stepSingle(delta int) {
 	n := a.single + delta
-	if n < 0 || n >= len(a.photos) {
+	if n < 0 || n >= len(a.singlePhotos) {
 		return
 	}
 	a.resetSingleZoom()
 	a.showInTag(n)
 }
 
-// chosenPhoto is the index in photos of the chosen gallery item, or -1
+// chosenPhoto is the index in photos of the chosen folders item, or -1
 // when it chose a folder or nothing.
 func (a *app) chosenPhoto() int {
 	if a.chosen < 0 || a.chosen >= len(a.items) {
@@ -515,19 +542,16 @@ func (a *app) chosenPhoto() int {
 
 // singlePhoto is the photo the single image view shows, or nil.
 func (a *app) singlePhoto() *photo {
-	if a.single < 0 || a.single >= len(a.photos) {
+	if a.single < 0 || a.single >= len(a.singlePhotos) {
 		return nil
 	}
-	return a.photos[a.single]
+	return a.singlePhotos[a.single]
 }
 
 // loadSingle decodes the photo the single image view shows, large enough
-// for the window, on a goroutine. The photograph already in the gallery
+// for the window, on a goroutine. The photograph already in the grid
 // shows meanwhile, when the grid had asked for its thumbnail.
 func (a *app) loadSingle() {
-	if a.single < 0 || a.single >= len(a.photos) {
-		a.single = 0
-	}
 	p := a.singlePhoto()
 	if p == nil {
 		a.clearSingle()

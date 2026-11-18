@@ -1,11 +1,11 @@
 # glry
 
-A read-only image browser built with [MyGo](https://github.com/egoist/mygo) native `ui`: a folder tree, a thumbnail gallery, a search view, and a single-image view with history tags.
+A read-only image browser built with [MyGo](https://github.com/egoist/mygo) native `ui`: a folder tree with a grid of thumbnails, a search view, and a single-image view with history tags.
 
 ## Files
 
 - `main.go` — app state and startup: the rail and view switching, tree scanning, folder loading, thumbnails, and the window.
-- `gallery.go` — the sidebar and the folder gallery: outline rows, folder and photo cells, selection, and the image count tag.
+- `folders.go` — the folders view: the sidebar's outline rows and the selected folder's grid of folder and photo cells, with their selection and the image count tag.
 - `single.go` — the single-image view: opening photos, zoom, pan, and the history tags with their kept views.
 - `search.go` — the search view: query/scope/page header, the search service request, and the results grid.
 - `config.go` — `~/.glry.json`: cell-size parsing and defaults, plus the config editor view.

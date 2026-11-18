@@ -41,16 +41,16 @@ func (a *app) treeRow(c *ui.Context, dir string) {
 	})
 }
 
-func (a *app) gallery(c *ui.Context) {
+func (a *app) folders(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Children(func() {
 		switch {
-		case a.galleryErr != nil:
-			a.galleryMessage(c, "Can't read this folder", a.galleryErr.Error(), false)
-		case a.galleryLoading:
-			a.galleryMessage(c, "Loading images…", "", true)
+		case a.foldersErr != nil:
+			a.gridMessage(c, "Can't read this folder", a.foldersErr.Error(), false)
+		case a.foldersLoading:
+			a.gridMessage(c, "Loading images…", "", true)
 		case len(a.items) == 0:
-			a.galleryMessage(c, "This folder is empty", "Choose another folder in the sidebar.", false)
+			a.gridMessage(c, "This folder is empty", "Choose another folder in the sidebar.", false)
 		default:
 			a.grid.Key = func(i int) any {
 				if i >= 0 && i < len(a.items) {
@@ -73,9 +73,9 @@ func (a *app) gallery(c *ui.Context) {
 			}
 		}
 	})
-	if !a.galleryLoading && a.galleryErr == nil && a.selected != "" {
+	if !a.foldersLoading && a.foldersErr == nil && a.selected != "" {
 		// An overlay keeps the tag in the window's corner while the
-		// gallery scrolls and resizes.
+		// grid scrolls and resizes.
 		ui.Overlay(c, func() {
 			ui.Badge(c, a.imagesTag()).Absolute().Bottom(0).Right(0).
 				Padding(3, 8).Radius(8, 0, 0, 0).
@@ -93,7 +93,7 @@ func (a *app) imagesTag() string {
 	return fmt.Sprintf("%s, %s", imageCount(len(a.photos)), byteSize(total))
 }
 
-func (a *app) galleryMessage(c *ui.Context, title, detail string, loading bool) {
+func (a *app) gridMessage(c *ui.Context, title, detail string, loading bool) {
 	t := c.Theme()
 	ui.Column(c).Fill().Center().Gap(8).Children(func() {
 		if loading {
@@ -153,7 +153,7 @@ func (a *app) photoCell(c *ui.Context, p *photo) {
 		return
 	}
 	t := c.Theme()
-	gen := a.galleryGen
+	gen := a.foldersGen
 	pad, gap, iconSize, showName := a.cellMetrics()
 	showMeta := a.cellHeight >= 64 && a.cellWidth >= 60
 	ui.Column(c).Fill().Padding(pad).Gap(gap).Children(func() {
@@ -162,7 +162,7 @@ func (a *app) photoCell(c *ui.Context, p *photo) {
 		} else {
 			// A guarded job: only the cells the grid builds, which are
 			// those in view, ask for their thumbnail, and only once.
-			a.requestThumb(func() bool { return gen == a.galleryGen }, p)
+			a.requestThumb(func() bool { return gen == a.foldersGen }, p)
 			ui.Column(c).Grow(1).Center().Children(func() {
 				if p.state == thumbFailed && showName {
 					ui.Text(c, "Can't open").FontSize(11).TextColor(t.TextMuted)
@@ -198,7 +198,7 @@ func imageCount(n int) string {
 	return fmt.Sprintf("%d images", n)
 }
 
-// activateItem opens the chosen gallery item: a folder shows its
+// activateItem opens the chosen folders item: a folder shows its
 // contents, an image shows alone in the single image view.
 func (a *app) activateItem(c *ui.Context) {
 	if a.chosen < 0 || a.chosen >= len(a.items) {
@@ -216,11 +216,11 @@ func (a *app) activateItem(c *ui.Context) {
 	}
 }
 
-// showGallery returns to the tree and the folder's gallery.
-func (a *app) showGallery() {
-	if a.mode == viewGallery {
+// showFolders returns to the tree and the selected folder's images.
+func (a *app) showFolders() {
+	if a.mode == viewFolders {
 		return
 	}
-	a.mode = viewGallery
+	a.mode = viewFolders
 	a.clearSingle()
 }

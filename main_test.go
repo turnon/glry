@@ -36,7 +36,8 @@ func singleViewNow(t *testing.T, a *app) *tagView {
 	return view
 }
 
-// sidebarHas reports whether s shows in the left sidebar, not the gallery.
+// sidebarHas reports whether s shows in the left sidebar, not the folders
+// view.
 func sidebarHas(a *app, tt *ui.Tester, s string) bool {
 	r, ok := tt.Find(s)
 	return ok && r.X < a.sidebarWidth
@@ -85,7 +86,7 @@ func TestViewShowsFolderImages(t *testing.T) {
 		}
 	}
 	if len(a.items) != 4 || !a.items[0].dir || !a.items[1].dir || a.items[2].dir || a.items[3].dir {
-		t.Fatalf("gallery items are %+v, want two folders before two images", a.items)
+		t.Fatalf("folders items are %+v, want two folders before two images", a.items)
 	}
 	if a.photos[0].img == nil {
 		t.Error("the first thumbnail did not load")
@@ -101,7 +102,7 @@ func TestViewShowsFolderImages(t *testing.T) {
 		t.Errorf("choosing Trips shows folder %q and %q, want its image", a.selected, tt.Texts())
 	}
 	if tt.HasText("alpha.png") || tt.HasText("beta.png") {
-		t.Errorf("the gallery kept the root's images: %q", tt.Texts())
+		t.Errorf("the folders view kept the root's images: %q", tt.Texts())
 	}
 
 	if err := tt.Click("Empty"); err != nil {
@@ -175,7 +176,7 @@ func TestScanSkipsHiddenAndNonImages(t *testing.T) {
 	}
 }
 
-func TestGalleryUsesCellSize(t *testing.T) {
+func TestFoldersUsesCellSize(t *testing.T) {
 	root := t.TempDir()
 	writePNG(t, filepath.Join(root, "a.png"), color.RGBA{A: 255})
 	a := syncApp(root)
@@ -197,8 +198,8 @@ func TestRailSwitchesViews(t *testing.T) {
 	a := syncApp(root)
 	tt := ui.NewTester(a.view, 1000, 640)
 
-	if a.mode != viewGallery {
-		t.Fatalf("the window starts in view %d, want the gallery", a.mode)
+	if a.mode != viewFolders {
+		t.Fatalf("the window starts in view %d, want the folders view", a.mode)
 	}
 	if err := tt.Click("Search"); err != nil {
 		t.Fatal(err)
@@ -215,11 +216,11 @@ func TestRailSwitchesViews(t *testing.T) {
 	if _, ok := tt.Find("Open"); ok {
 		t.Error("the tree and its buttons still show in the single image view")
 	}
-	if err := tt.Click("File tree"); err != nil {
+	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	if a.mode != viewGallery || !tt.HasText("alpha.png") || !tt.HasText("beta.png") {
-		t.Fatalf("clicking the tree icon shows view %d with %q, want the gallery", a.mode, tt.Texts())
+	if a.mode != viewFolders || !tt.HasText("alpha.png") || !tt.HasText("beta.png") {
+		t.Fatalf("clicking the folders button shows view %d with %q, want its images", a.mode, tt.Texts())
 	}
 }
 
@@ -245,11 +246,11 @@ func TestSingleViewOpensPhoto(t *testing.T) {
 		t.Errorf("the history is %v, want beta.png alone", a.history)
 	}
 
-	// The eye opens the photo the gallery chose.
-	if err := tt.Click("File tree"); err != nil {
+	// The eye opens the photo the folders view chose.
+	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "alpha.png" })
+	a.chosen = slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "alpha.png" })
 	tt.Frame()
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
@@ -271,7 +272,7 @@ func TestTagsSurviveOpeningAnotherFolder(t *testing.T) {
 	tt := ui.NewTester(a.view, 1000, 640)
 
 	// Open alpha.png: it becomes the only tag.
-	alpha := slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "alpha.png" })
+	alpha := slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "alpha.png" })
 	a.chosen = alpha
 	tt.Frame()
 	if err := tt.Click("Single image"); err != nil {
@@ -283,13 +284,13 @@ func TestTagsSurviveOpeningAnotherFolder(t *testing.T) {
 
 	// Choosing another folder and opening its image adds a tag rather
 	// than clearing the ones opened before.
-	if err := tt.Click("File tree"); err != nil {
+	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.Click("Trips"); err != nil {
 		t.Fatal(err)
 	}
-	beach := slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beach.png" })
+	beach := slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "beach.png" })
 	a.chosen = beach
 	tt.Frame()
 	if err := tt.Click("Single image"); err != nil {
@@ -331,14 +332,14 @@ func TestArrowsRenameCurrentTagOnly(t *testing.T) {
 	a := syncApp(root)
 	tt := ui.NewTester(a.view, 1000, 640)
 
-	// Show alpha, then beta from the gallery: each opens a tag.
+	// Show alpha, then beta from the folders view: each opens a tag.
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("File tree"); err != nil {
+	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	beta := slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
+	beta := slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "beta.png" })
 	a.chosen = beta
 	tt.Frame()
 	if err := tt.Click("Single image"); err != nil {
@@ -382,14 +383,14 @@ func TestClosingTags(t *testing.T) {
 	a := syncApp(root)
 	tt := ui.NewTester(a.view, 1000, 640)
 
-	// Show alpha, then beta from the gallery: each opens a tag.
+	// Show alpha, then beta from the folders view: each opens a tag.
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("File tree"); err != nil {
+	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
+	a.chosen = slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "beta.png" })
 	tt.Frame()
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
@@ -429,13 +430,13 @@ func TestClosingTags(t *testing.T) {
 		t.Errorf("the closed tag still shows: %q", tt.Texts())
 	}
 
-	// Escape closes the current tag, the last, and returns to the gallery.
+	// Escape closes the current tag, the last, and returns to the folders view.
 	tt.Key(0, ui.KeyEscape)
 	if len(a.history) != 0 || a.tag != -1 {
 		t.Errorf("closing the last tag leaves %v with tag %d", a.history, a.tag)
 	}
-	if a.mode != viewGallery {
-		t.Errorf("closing the last tag shows view %d, want the gallery", a.mode)
+	if a.mode != viewFolders {
+		t.Errorf("closing the last tag shows view %d, want the folders view", a.mode)
 	}
 }
 
@@ -606,7 +607,7 @@ func TestSingleImageKeepsZoomPerTag(t *testing.T) {
 	}
 
 	// Leaving the view and coming back keeps where the photo was.
-	if err := tt.Click("File tree"); err != nil {
+	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tt.Click("Single image"); err != nil {
@@ -618,7 +619,7 @@ func TestSingleImageKeepsZoomPerTag(t *testing.T) {
 
 	// Another photo opens as another tag, fitting on its own: the first
 	// tag keeps where its photo was.
-	if err := tt.Click("File tree"); err != nil {
+	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
 	cell, ok := tt.Find("beta.png")
@@ -707,5 +708,132 @@ func TestSearchViewFindsImages(t *testing.T) {
 	}
 	if a.searchPage != 1 || !slices.Equal(pages, []string{"1", "2", "1"}) {
 		t.Errorf("the arrows asked for pages %v and left page %d, want 1, 2, 1", pages, a.searchPage)
+	}
+}
+
+func TestFoldersAndSearchKeepOwnState(t *testing.T) {
+	root := t.TempDir()
+	alpha := filepath.Join(root, "alpha.png")
+	beta := filepath.Join(root, "beta.png")
+	writePNG(t, alpha, color.RGBA{R: 255, A: 255})
+	writePNG(t, beta, color.RGBA{G: 255, A: 255})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"list":[{"path":%q,"score":0.6},{"path":%q,"score":0.5}],"total":2}`,
+			alpha, beta)
+	}))
+	defer srv.Close()
+
+	// Both views list images, each with the item it chose.
+	a := syncApp(root)
+	a.searchURL = srv.URL
+	a.searchQuery = "beta"
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.Click("alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.items[a.chosen].name; got != "alpha.png" {
+		t.Fatalf("the folders view chose %q, want alpha.png", got)
+	}
+
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("beta.png"); err != nil {
+		t.Fatal(err)
+	}
+	if a.searchChosen != 1 {
+		t.Fatalf("the search chose result %d, want beta.png's, the second", a.searchChosen)
+	}
+	if a.chosen != 0 || a.items[a.chosen].name != "alpha.png" {
+		t.Errorf("the search changed the folders view's choice to %q", a.items[a.chosen].name)
+	}
+
+	// Back in the folders view, each view keeps its own choice.
+	if err := tt.Click("Folders"); err != nil {
+		t.Fatal(err)
+	}
+	if a.searchChosen != 1 || a.chosen != 0 || a.items[a.chosen].name != "alpha.png" {
+		t.Errorf("the folders view shows choices %d and %d, want each view to keep its own",
+			a.chosen, a.searchChosen)
+	}
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if a.searchChosen != 1 || !tt.HasText("beta.png") {
+		t.Errorf("the search view lost its choice %d: %q", a.searchChosen, tt.Texts())
+	}
+}
+
+func TestSearchResultKeepsFoldersView(t *testing.T) {
+	root := t.TempDir()
+	trips := filepath.Join(root, "Trips")
+	if err := os.Mkdir(trips, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	beach := filepath.Join(trips, "beach.png")
+	sunset := filepath.Join(trips, "sunset.png")
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, beach, color.RGBA{B: 255, A: 255})
+	writePNG(t, sunset, color.RGBA{G: 255, B: 255, A: 255})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"list":[{"path":%q,"score":0.6},{"path":%q,"score":0.5}],"total":2}`,
+			beach, sunset)
+	}))
+	defer srv.Close()
+
+	a := syncApp(root)
+	a.searchURL = srv.URL
+	a.searchQuery = "beach"
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Doubling onto a result shows it alone, stepping through the results.
+	cell, ok := tt.Find("beach.png")
+	if !ok {
+		t.Fatalf("the result is not shown: %q", tt.Texts())
+	}
+	x, y := cell.X+cell.W/2, cell.Y+cell.H/2
+	tt.ClickAt(x, y)
+	tt.ClickAt(x, y)
+	if a.mode != viewSingle {
+		t.Fatalf("double clicking a result shows view %d, want the single image", a.mode)
+	}
+	if p := a.singlePhoto(); p == nil || p.name != "beach.png" {
+		t.Fatalf("the view shows %v, want beach.png", p)
+	}
+	if a.selected != root {
+		t.Errorf("the folders view shows folder %q, want %q", a.selected, root)
+	}
+	if len(a.photos) != 1 || a.photos[0].name != "alpha.png" {
+		t.Errorf("the folders view's images are %v, want alpha.png alone", a.photos)
+	}
+
+	tt.Key(0, ui.KeyRight)
+	if p := a.singlePhoto(); p == nil || p.name != "sunset.png" {
+		t.Errorf("the right arrow shows %v, want the next result", p)
+	}
+	tt.Key(0, ui.KeyRight)
+	if p := a.singlePhoto(); p == nil || p.name != "sunset.png" {
+		t.Errorf("the arrow past the last result shows %v", p)
+	}
+
+	// The folders view still lists the folder it showed.
+	if err := tt.Click("Folders"); err != nil {
+		t.Fatal(err)
+	}
+	if a.selected != root || !tt.HasText("alpha.png") || tt.HasText("beach.png") {
+		t.Errorf("the folders view shows folder %q: %q", a.selected, tt.Texts())
 	}
 }
