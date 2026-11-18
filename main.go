@@ -531,17 +531,25 @@ func (a *app) rail(c *ui.Context) {
 }
 
 // railButton is one icon of the rail, drawn as chosen when its view is the
-// one showing.
+// one showing. A button of the rail has no face of its own, so that the
+// rail is its icons and the view showing; it takes the theme's face only
+// under the pointer.
 func (a *app) railButton(c *ui.Context, label, tooltip string, icon *ui.SVG, active bool, onClick func()) {
 	t := c.Theme()
-	btn := ui.Button(c, "").Label(label).Tooltip(tooltip).BorderWidth(0).Size(32, 32).
-		OnClick(onClick)
+	btn := ui.ButtonBase(c).Label(label).Tooltip(tooltip).Size(32, 32).
+		Radius(t.Radius).OnClick(onClick)
 	btn.Children(func() {
 		ui.Icon(c, icon).Size(18, 18)
 	})
 	btn.Selected(active)
 	if !active {
 		btn.TextColor(t.TextMuted)
+		switch {
+		case btn.Pressed():
+			btn.Background(t.SurfacePressed)
+		case btn.Hovered():
+			btn.Background(t.SurfaceHover)
+		}
 	}
 }
 
