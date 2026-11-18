@@ -27,11 +27,15 @@ func (a *app) singleView(c *ui.Context) {
 		if len(a.history) > 0 {
 			// The tags fill the header's height and touch, as the tabs
 			// of a tab bar do, over the face the tags not showing have,
-			// so that the header is theirs and the one showing.
+			// so that the header is theirs and the one showing. The line
+			// below runs under the tags too, and the tag showing covers
+			// it with the viewer's background, so that it looks one with
+			// the photo below.
 			ui.Row(c).AlignItems(ui.Stretch).Wrap().Background(t.Surface).Children(func() {
+				ui.Box(c).Absolute().Bottom(0).Left(0).Right(0).Height(1).
+					Background(t.Border).IgnoreInput(true).ZIndex(-1)
 				a.historyTags(c)
 			})
-			ui.Divider(c)
 		}
 		switch {
 		case p == nil:
@@ -48,8 +52,10 @@ func (a *app) singleView(c *ui.Context) {
 		src := a.singleSource()
 		// Grow takes the room the header leaves, so that the photo's
 		// box ends inside the window rather than past it, where its
-		// scroll bars would not show. It touches the window's edges.
-		ui.Column(c).Grow(1).MinHeight(0).Center().Children(func() {
+		// scroll bars would not show. The padding leaves a margin of the
+		// viewer's background around it, which the tag showing runs
+		// into below the header.
+		ui.Column(c).Grow(1).MinHeight(0).Center().Padding(2).Children(func() {
 			a.singlePhotoBox(c, src)
 		})
 	})
@@ -281,25 +287,36 @@ func (a *app) resetSingleZoom() {
 	a.singleDragging = false
 }
 
+// tagWidth is how wide a tag of the single image view's header is,
+// whatever the length of the photo's name: the name cuts with an
+// ellipsis.
+const tagWidth = 150
+
 // historyTags are the photos the single image view opened, on the left of
 // its header, as tags that show one again. A tag outlives the folder the
 // view shows, so opening an image elsewhere keeps the ones opened before.
-// Its close icon on the right drops it. The tag showing takes the header's
-// background, as a tab of a tab bar does, and the accent marks it with a
-// line along its top.
+// Its close icon on the right drops it. The tag showing takes the viewer's
+// background, as a tab of a tab bar does, so that it looks one with the
+// photo below, and the accent marks it with a line along its top. The
+// header has no line along its top, as the search view's header has none.
 func (a *app) historyTags(c *ui.Context) {
 	t := c.Theme()
 	// face styles a part of a tag: every part leaves room for the line, so
 	// that nothing moves as the choice does, the tag showing filling it
-	// with the accent and the others with their own face.
-	face := func(e ui.Element, on bool) ui.Element {
-		line := t.Surface
+	// with the accent, the others leaving it clear so that the header shows
+	// through with no border. A tag the pointer is over lights whole, both
+	// its parts at once, the clear line taking its face.
+	face := func(e ui.Element, on, hover bool) ui.Element {
+		line := ui.Color{}
 		if on {
 			line = t.Accent
 		}
 		e = e.BorderWidth(2, 0, 0, 0).BorderColor(line).AccessSelected(on)
-		if on {
+		switch {
+		case on:
 			e = e.Background(t.Background)
+		case hover:
+			e = e.Background(t.SurfaceHover)
 		}
 		return e
 	}
@@ -307,12 +324,14 @@ func (a *app) historyTags(c *ui.Context) {
 		j, name := j, filepath.Base(path)
 		on := j == a.tag
 		c.Key(j)
-		ui.Row(c).AlignItems(ui.Stretch).Gap(0).Children(func() {
-			face(ui.Button(c, name).FontSize(12).MaxWidth(140).
-				Padding(6, 14).Radius(0).Tooltip(name), on).
+		row := ui.Row(c).AlignItems(ui.Stretch).Gap(0).Width(tagWidth).Shrink(0)
+		hover := !on && row.Hovered()
+		row.Children(func() {
+			face(ui.Button(c, name).FontSize(12).Grow(1).MinWidth(0).
+				Padding(6, 10).Radius(0).Tooltip(name), on, hover).
 				OnClick(func() { a.selectTag(j) })
 			face(ui.Button(c, "").Label("Close "+name).Tooltip("Close this tag").
-				Padding(6, 8).Radius(0), on).
+				Padding(6, 8).Radius(0).Shrink(0), on, hover).
 				OnClick(func() { a.closeTag(j) }).
 				Children(func() {
 					ui.Icon(c, closeIcon).Size(10, 10)
