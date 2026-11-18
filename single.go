@@ -282,20 +282,35 @@ func (a *app) resetSingleZoom() {
 // historyTags are the photos the single image view opened, on the left of
 // its header, as tags that show one again. A tag outlives the folder the
 // view shows, so opening an image elsewhere keeps the ones opened before.
-// Its close icon on the right drops it.
+// Its close icon on the right drops it. The tag showing takes the header's
+// background, as a tab of a tab bar does, and the accent marks it with a
+// line along its top.
 func (a *app) historyTags(c *ui.Context) {
+	t := c.Theme()
+	// face styles a part of a tag: every part leaves room for the line, so
+	// that nothing moves as the choice does, the tag showing filling it
+	// with the accent and the others with their own face.
+	face := func(e ui.Element, on bool) ui.Element {
+		line := t.Surface
+		if on {
+			line = t.Accent
+		}
+		e = e.BorderWidth(2, 0, 0, 0).BorderColor(line).AccessSelected(on)
+		if on {
+			e = e.Background(t.Background)
+		}
+		return e
+	}
 	for j, path := range a.history {
 		j, name := j, filepath.Base(path)
 		on := j == a.tag
 		c.Key(j)
 		ui.Row(c).AlignItems(ui.Stretch).Gap(0).Children(func() {
-			ui.Button(c, name).FontSize(12).BorderWidth(0).MaxWidth(140).
-				Padding(6, 14).Radius(0).Tooltip(name).
-				Selected(on).
+			face(ui.Button(c, name).FontSize(12).MaxWidth(140).
+				Padding(6, 14).Radius(0).Tooltip(name), on).
 				OnClick(func() { a.selectTag(j) })
-			ui.Button(c, "").Label("Close "+name).Tooltip("Close this tag").
-				BorderWidth(0).Padding(6, 8).Radius(0).
-				Selected(on).
+			face(ui.Button(c, "").Label("Close "+name).Tooltip("Close this tag").
+				Padding(6, 8).Radius(0), on).
 				OnClick(func() { a.closeTag(j) }).
 				Children(func() {
 					ui.Icon(c, closeIcon).Size(10, 10)
