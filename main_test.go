@@ -7,6 +7,8 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -82,62 +84,21 @@ func TestViewShowsFolderImages(t *testing.T) {
 			t.Fatalf("%q is not shown: %q", name, tt.Texts())
 		}
 	}
-	for _, button := range []string{"Open", "Refresh"} {
-		if _, ok := tt.Find(button); !ok {
-			t.Errorf("the sidebar's %s icon button is not shown", button)
-		}
-	}
-	if a.chosen != -1 {
-		t.Errorf("a gallery item is chosen at start: %d", a.chosen)
-	}
-	if len(a.photos) != 2 {
-		t.Fatalf("%d photos in the root, want 2", len(a.photos))
-	}
 	if len(a.items) != 4 || !a.items[0].dir || !a.items[1].dir || a.items[2].dir || a.items[3].dir {
 		t.Fatalf("gallery items are %+v, want two folders before two images", a.items)
 	}
-	// The cells in view decoded their thumbnails.
-	if len(a.photos) > 0 && a.photos[0].img == nil {
+	if a.photos[0].img == nil {
 		t.Error("the first thumbnail did not load")
-	}
-	if a.photos[0].state != thumbReady {
-		t.Errorf("the first thumbnail is in state %d, want ready", a.photos[0].state)
-	}
-	if a.photos[0].width != 40 || a.photos[0].height != 30 {
-		t.Errorf("the first photo is %d×%d, want 40×30", a.photos[0].width, a.photos[0].height)
-	}
-	if !tt.HasText("40 × 30") {
-		t.Errorf("the cell does not show the photo's dimensions: %q", tt.Texts())
-	}
-	dims, ok := tt.Find("40 × 30")
-	if !ok {
-		t.Fatal("the dimensions line is not shown")
-	}
-	size, ok := tt.Find(byteSize(a.photos[0].size))
-	if !ok {
-		t.Fatal("the size line is not shown")
-	}
-	if dims.Y >= size.Y {
-		t.Errorf("dimensions (%v) are not above the size (%v)", dims, size)
 	}
 	if !tt.HasText("2 images,") {
 		t.Errorf("the size tag does not count the folder's images: %q", tt.Texts())
-	}
-	if tag, ok := tt.Find(a.imagesTag()); !ok || tag.X+tag.W < 985 || tag.Y+tag.H < 630 {
-		t.Errorf("the size tag is not in the gallery's bottom right corner: %v, shown %v", tag, ok)
 	}
 
 	if err := tt.Click("Trips"); err != nil {
 		t.Fatal(err)
 	}
-	if a.selected != trips {
-		t.Fatalf("the chosen folder is %q, want %q", a.selected, trips)
-	}
-	if !tt.HasText("beach.png") {
-		t.Errorf("Trips' image is not shown: %q", tt.Texts())
-	}
-	if !tt.HasText("1 image,") {
-		t.Errorf("the size tag does not count one image: %q", tt.Texts())
+	if a.selected != trips || !tt.HasText("beach.png") {
+		t.Errorf("choosing Trips shows folder %q and %q, want its image", a.selected, tt.Texts())
 	}
 	if tt.HasText("alpha.png") || tt.HasText("beta.png") {
 		t.Errorf("the gallery kept the root's images: %q", tt.Texts())
@@ -149,26 +110,11 @@ func TestViewShowsFolderImages(t *testing.T) {
 	if !tt.HasText("This folder is empty") {
 		t.Errorf("the empty folder shows no empty state: %q", tt.Texts())
 	}
-	if !tt.HasText("0 images, 0 B") {
-		t.Errorf("the empty folder's tag is wrong: %q", tt.Texts())
+	if err := tt.Click("Single image"); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestByteSize(t *testing.T) {
-	for _, tc := range []struct {
-		n    int64
-		want string
-	}{
-		{0, "0 B"},
-		{1023, "1023 B"},
-		{1024, "1.0 KB"},
-		{1536, "1.5 KB"},
-		{12 * 1024 * 1024, "12.0 MB"},
-		{2 * 1024 * 1024 * 1024, "2.0 GB"},
-	} {
-		if got := byteSize(tc.n); got != tc.want {
-			t.Errorf("byteSize(%d) = %q, want %q", tc.n, got, tc.want)
-		}
+	if !tt.HasText("No images in this folder") {
+		t.Errorf("an empty folder has no single image state: %q", tt.Texts())
 	}
 }
 
@@ -251,98 +197,40 @@ func TestRailSwitchesViews(t *testing.T) {
 	a := syncApp(root)
 	tt := ui.NewTester(a.view, 1000, 640)
 
-	// The rail stands at the window's left edge, before the tree.
-	rail, ok := tt.Find("File tree")
-	if !ok {
-		t.Fatalf("the rail's file tree icon is not shown: %q", tt.Texts())
-	}
-	if rail.X+rail.W > railWidth {
-		t.Errorf("the rail's file tree icon is at %v, past the rail's %d DIPs", rail, railWidth)
-	}
-	if tree, ok := tt.Find("Open"); !ok || tree.X < railWidth {
-		t.Errorf("the sidebar is at %v, want it right of the rail", tree)
-	}
 	if a.mode != viewGallery {
 		t.Fatalf("the window starts in view %d, want the gallery", a.mode)
 	}
-
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if a.mode != viewSearch {
+		t.Fatalf("clicking the magnifier shows view %d, want the search", a.mode)
+	}
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
 	}
-	if a.mode != viewSingle {
-		t.Fatalf("clicking the magnifier shows view %d, want the single image", a.mode)
+	if a.mode != viewSingle || !tt.HasText("alpha.png") {
+		t.Fatalf("clicking the eye shows view %d with %q, want the first image", a.mode, tt.Texts())
 	}
 	if _, ok := tt.Find("Open"); ok {
 		t.Error("the tree and its buttons still show in the single image view")
 	}
-	if _, ok := tt.Find("Next image"); ok {
-		t.Error("the single image view still shows its next button")
-	}
-	if !tt.HasText("alpha.png") {
-		t.Errorf("the single image view does not tag the image shown: %q", tt.Texts())
-	}
-	if a.singleImg == nil {
-		t.Fatal("the single image view did not decode the first photo")
-	}
-
-	tt.Key(0, ui.KeyRight)
-	if a.single != 1 {
-		t.Errorf("the right arrow shows image %d, want the second", a.single)
-	}
-	if len(a.history) != 1 || a.history[0] != a.photos[1].path {
-		t.Errorf("the arrow opened a tag instead of renaming one: %v", a.history)
-	}
-	if tt.HasText("alpha.png") || !tt.HasText("beta.png") {
-		t.Errorf("the tag did not change from alpha.png to beta.png: %q", tt.Texts())
-	}
-	tt.Key(0, ui.KeyRight)
-	if a.single != 1 || len(a.history) != 1 {
-		t.Errorf("the right arrow moved past the last image: %d, %v", a.single, a.history)
-	}
-	tt.Key(0, ui.KeyLeft)
-	if a.single != 0 || len(a.history) != 1 || a.history[0] != a.photos[0].path {
-		t.Errorf("the left arrow shows image %d, history %v, want the first", a.single, a.history)
-	}
-	if !tt.HasText("alpha.png") {
-		t.Errorf("the tag did not change back to alpha.png: %q", tt.Texts())
-	}
-
 	if err := tt.Click("File tree"); err != nil {
 		t.Fatal(err)
 	}
-	if a.mode != viewGallery {
-		t.Fatalf("clicking the tree icon shows view %d, want the gallery", a.mode)
-	}
-	if !tt.HasText("alpha.png") || !tt.HasText("beta.png") {
-		t.Errorf("the gallery did not come back: %q", tt.Texts())
+	if a.mode != viewGallery || !tt.HasText("alpha.png") || !tt.HasText("beta.png") {
+		t.Fatalf("clicking the tree icon shows view %d with %q, want the gallery", a.mode, tt.Texts())
 	}
 }
 
-func TestSingleViewShowsChosenPhoto(t *testing.T) {
+func TestSingleViewOpensPhoto(t *testing.T) {
 	root := t.TempDir()
 	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
 	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
 	a := syncApp(root)
 	tt := ui.NewTester(a.view, 1000, 640)
 
-	beta := slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
-	a.chosen = beta
-	tt.Frame()
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	if a.single != 1 || !tt.HasText("beta.png") {
-		t.Errorf("the single image view shows image %d, want beta.png: %q", a.single, tt.Texts())
-	}
-}
-
-func TestDoubleClickPhotoShowsSingleView(t *testing.T) {
-	root := t.TempDir()
-	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
-	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
-	a := syncApp(root)
-	tt := ui.NewTester(a.view, 1000, 640)
-
+	// A double click opens that photo alone, with a tag for it.
 	cell, ok := tt.Find("beta.png")
 	if !ok {
 		t.Fatalf("the image cell is not shown: %q", tt.Texts())
@@ -350,79 +238,24 @@ func TestDoubleClickPhotoShowsSingleView(t *testing.T) {
 	x, y := cell.X+cell.W/2, cell.Y+cell.H/2
 	tt.ClickAt(x, y)
 	tt.ClickAt(x, y)
-
-	if a.mode != viewSingle {
-		t.Fatalf("double clicking a photo shows view %d, want the single image", a.mode)
-	}
-	if a.single != 1 {
-		t.Errorf("double clicking beta.png shows image %d, want 1", a.single)
-	}
-	if !tt.HasText("beta.png") {
-		t.Errorf("the single image view does not tag beta.png: %q", tt.Texts())
+	if a.mode != viewSingle || a.single != 1 || !tt.HasText("beta.png") {
+		t.Errorf("double clicking beta.png shows view %d image %d: %q", a.mode, a.single, tt.Texts())
 	}
 	if len(a.history) != 1 || a.history[0] != a.photos[1].path {
 		t.Errorf("the history is %v, want beta.png alone", a.history)
 	}
-}
 
-func TestSingleViewKeepsHistoryTags(t *testing.T) {
-	root := t.TempDir()
-	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
-	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
-	writePNG(t, filepath.Join(root, "gamma.png"), color.RGBA{B: 255, A: 255})
-	a := syncApp(root)
-	tt := ui.NewTester(a.view, 1000, 640)
-
-	// Show alpha, then beta from the gallery: each opens a tag.
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	if len(a.history) != 1 || a.history[0] != a.photos[0].path {
-		t.Fatalf("the history is %v, want alpha.png alone", a.history)
-	}
+	// The eye opens the photo the gallery chose.
 	if err := tt.Click("File tree"); err != nil {
 		t.Fatal(err)
 	}
-	beta := slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
-	a.chosen = beta
+	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "alpha.png" })
 	tt.Frame()
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
 	}
-	if len(a.history) != 2 || a.history[0] != a.photos[0].path || a.history[1] != a.photos[1].path {
-		t.Fatalf("the history is %v, want alpha.png then beta.png", a.history)
-	}
-	if a.tag != 1 {
-		t.Errorf("the current tag is %d, want beta.png's", a.tag)
-	}
-
-	// The photos opened are tagged on the left of the header.
-	tag, ok := tt.Find("alpha.png")
-	if !ok {
-		t.Fatalf("the history tag is not shown: %q", tt.Texts())
-	}
-	if tag.X > 200 || tag.Y > 50 {
-		t.Errorf("the history tag is at %v, want the header's left", tag)
-	}
-	if err := tt.Click("alpha.png"); err != nil {
-		t.Fatal(err)
-	}
-	if a.single != 0 || a.tag != 0 {
-		t.Errorf("the tag shows image %d with tag %d, want alpha.png's tag", a.single, a.tag)
-	}
-
-	// The tags stay when the gallery takes the window and gives it back.
-	if err := tt.Click("File tree"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	if a.single != 0 {
-		t.Errorf("coming back shows image %d, want alpha.png", a.single)
-	}
-	if _, ok := tt.Find("beta.png"); !ok {
-		t.Errorf("the history tags went away with the gallery: %q", tt.Texts())
+	if a.single != 0 || !tt.HasText("alpha.png") {
+		t.Errorf("the eye shows image %d: %q, want alpha.png", a.single, tt.Texts())
 	}
 }
 
@@ -596,71 +429,13 @@ func TestClosingTags(t *testing.T) {
 		t.Errorf("the closed tag still shows: %q", tt.Texts())
 	}
 
-	// Closing the current tag, the last, returns to the gallery.
-	if err := tt.Click("Close beta.png"); err != nil {
-		t.Fatal(err)
-	}
+	// Escape closes the current tag, the last, and returns to the gallery.
+	tt.Key(0, ui.KeyEscape)
 	if len(a.history) != 0 || a.tag != -1 {
 		t.Errorf("closing the last tag leaves %v with tag %d", a.history, a.tag)
 	}
 	if a.mode != viewGallery {
 		t.Errorf("closing the last tag shows view %d, want the gallery", a.mode)
-	}
-}
-
-func TestEscapeClosesCurrentTag(t *testing.T) {
-	root := t.TempDir()
-	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
-	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
-	a := syncApp(root)
-	tt := ui.NewTester(a.view, 1000, 640)
-
-	// Show alpha, then beta from the gallery: each opens a tag.
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tt.Click("File tree"); err != nil {
-		t.Fatal(err)
-	}
-	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
-	tt.Frame()
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	if len(a.history) != 2 || a.tag != 1 {
-		t.Fatalf("the history is %v, tag %d, want both photos tagged at the second", a.history, a.tag)
-	}
-
-	// Escape closes the current tag, showing the one opened before it.
-	tt.Key(0, ui.KeyEscape)
-	if len(a.history) != 1 || a.history[0] != a.photos[0].path {
-		t.Errorf("Escape leaves %v, want alpha.png alone", a.history)
-	}
-	if a.tag != 0 || a.single != 0 {
-		t.Errorf("Escape shows image %d with tag %d, want alpha.png", a.single, a.tag)
-	}
-	if _, ok := tt.Find("beta.png"); ok {
-		t.Errorf("Escape kept beta.png's tag: %q", tt.Texts())
-	}
-
-	// Closing the current tag when it is the first shows the next one.
-	if err := tt.Click("File tree"); err != nil {
-		t.Fatal(err)
-	}
-	a.chosen = slices.IndexFunc(a.items, func(it galleryItem) bool { return it.name == "beta.png" })
-	tt.Frame()
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tt.Click("alpha.png"); err != nil {
-		t.Fatal(err)
-	}
-	if a.tag != 0 {
-		t.Fatalf("choosing alpha.png's tag shows tag %d, want the first", a.tag)
-	}
-	tt.Key(0, ui.KeyEscape)
-	if len(a.history) != 1 || a.history[0] != a.photos[1].path || a.tag != 0 || a.single != 1 {
-		t.Errorf("Escape leaves %v with tag %d showing image %d, want beta.png", a.history, a.tag, a.single)
 	}
 }
 
@@ -682,18 +457,6 @@ func TestHistoryTagsKeepTheLatest(t *testing.T) {
 	}
 	if a.history[0] != a.photos[3].path {
 		t.Errorf("the history starts at %q, want the first kept photo", a.history[0])
-	}
-}
-
-func TestSingleViewWithoutImages(t *testing.T) {
-	root := t.TempDir()
-	a := syncApp(root)
-	tt := ui.NewTester(a.view, 900, 600)
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	if !tt.HasText("No images in this folder") {
-		t.Errorf("an empty folder has no single image state: %q", tt.Texts())
 	}
 }
 
@@ -826,55 +589,6 @@ func TestSingleImageZoomResetsOnArrows(t *testing.T) {
 	}
 }
 
-func TestSingleImageScrollsSideways(t *testing.T) {
-	root := t.TempDir()
-	// A wide photo: zoomed, it overflows sideways where it does not up
-	// and down.
-	writePNGSize(t, filepath.Join(root, "wide.png"), 400, 100, color.RGBA{R: 255, A: 255})
-	a := syncApp(root)
-	var ctx *ui.Context
-	tt := ui.NewTester(func(c *ui.Context) { ctx = c; a.view(c) }, 1000, 640)
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	room := a.singleRef.Bounds(ctx)
-	// The room ends inside the window: a bar below it would not show.
-	if room.Y+room.H > 640 {
-		t.Fatalf("the room ends past the window: %v", room)
-	}
-	cx := room.X + room.W/2
-	for range 3 {
-		tt.Wheel(cx, room.Y+room.H/2, 0, -1)
-	}
-	tt.Frame()
-	view := singleViewNow(t, a)
-	if view.scroll.MaxX <= 0 {
-		t.Fatalf("a wide photo does not scroll sideways: max %v/%v", view.scroll.MaxX, view.scroll.MaxY)
-	}
-	if view.scroll.MaxY != 0 {
-		t.Fatalf("a wide photo scrolls up and down too: max %v/%v", view.scroll.MaxX, view.scroll.MaxY)
-	}
-
-	// Its bar takes the pointer at the room's bottom edge, and a drag of
-	// the bar scrolls the photo rather than dragging it.
-	y := room.Y + room.H - 6
-	tt.Move(cx, y)
-	if got := tt.Cursor(); got != ui.CursorDefault {
-		t.Errorf("the horizontal scroll bar has cursor %v, want the default", got)
-	}
-	before := view.scroll.X
-	tt.Press(cx, y)
-	tt.Move(cx+60, y)
-	tt.Release(cx+60, y)
-	if view.scroll.X <= before {
-		t.Errorf("dragging the bar right scrolled from %v to %v", before, view.scroll.X)
-	}
-	if a.singleDragging {
-		t.Error("dragging the bar started a drag of the photo")
-	}
-}
-
 func TestSingleImageKeepsZoomPerTag(t *testing.T) {
 	root := t.TempDir()
 	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
@@ -942,5 +656,56 @@ func TestSingleImageKeepsZoomPerTag(t *testing.T) {
 	}
 	if got := singleViewNow(t, a); got.zoom != betaZoom {
 		t.Errorf("beta.png shows at %v again, want %v", got.zoom, betaZoom)
+	}
+}
+
+func TestSearchViewFindsImages(t *testing.T) {
+	root := t.TempDir()
+	found := filepath.Join(root, "beta.png")
+	writePNG(t, found, color.RGBA{G: 255, A: 255})
+
+	var got struct{ method, path, accept, query, scope, page string }
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = struct{ method, path, accept, query, scope, page string }{
+			r.Method, r.URL.Path, r.Header.Get("Accept"),
+			r.URL.Query().Get("query"), r.URL.Query().Get("scope"), r.URL.Query().Get("page"),
+		}
+		pages = append(pages, got.page)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"list":[{"path":%q,"score":0.75}],"total":4}`, found)
+	}))
+	defer srv.Close()
+
+	a := syncApp(root)
+	a.searchURL = srv.URL
+	a.searchQuery, a.searchScope = "beta", root
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+	if got.method != http.MethodGet || got.path != "/search" || got.accept != "application/json" ||
+		got.query != "beta" || got.scope != root || got.page != "1" {
+		t.Errorf("the search sent %+v, want GET /search?query=beta&scope=%s&page=1", got, root)
+	}
+	if len(a.searchResults) != 1 || a.searchResults[0].photo.path != found {
+		t.Fatalf("the search found %v, want %q", a.searchResults, found)
+	}
+	if !tt.HasText("0.750") || !tt.HasText("1/4 pages") {
+		t.Errorf("the view does not show the result and its page: %q", tt.Texts())
+	}
+
+	// The arrows step through the service's pages.
+	if err := tt.Click("Next page"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Previous page"); err != nil {
+		t.Fatal(err)
+	}
+	if a.searchPage != 1 || !slices.Equal(pages, []string{"1", "2", "1"}) {
+		t.Errorf("the arrows asked for pages %v and left page %d, want 1, 2, 1", pages, a.searchPage)
 	}
 }

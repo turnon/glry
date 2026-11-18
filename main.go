@@ -20,6 +20,7 @@ var (
 	pictureIcon      = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 4.5-4.5L13 17l2.5-2.5L20 19"/></svg>`))
 	treeIcon         = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2a1 1 0 0 0-.8-.4h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/></svg>`))
 	searchIcon       = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>`))
+	eyeIcon          = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>`))
 	chevronLeftIcon  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>`))
 	chevronRightIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`))
 	closeIcon        = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`))
@@ -43,6 +44,7 @@ type viewMode uint8
 
 const (
 	viewGallery viewMode = iota
+	viewSearch
 	viewSingle
 	viewConfig
 )
@@ -119,10 +121,10 @@ type app struct {
 	grid           ui.GridState
 	chosen         int
 
-	// mode chooses between the tree and gallery and the single image
-	// view; single is the index into photos that view shows, and
-	// singleImg its decoded bitmap, which singleGen tells the results of
-	// an image left meanwhile to drop.
+	// mode chooses between the tree and gallery, the search, the single
+	// image view and the config; single is the index into photos that view
+	// shows, and singleImg its decoded bitmap, which singleGen tells the
+	// results of an image left meanwhile to drop.
 	mode          viewMode
 	single        int
 	singleImg     ui.ImageSource
@@ -148,6 +150,26 @@ type app struct {
 	history    []string
 	tag        int
 	pendingTag int
+
+	// searchURL is where the search view asks for images; searchQuery,
+	// searchScope and searchPage are its inputs, and searchPageSize the
+	// largest page of results seen, which the page count uses. searchResults
+	// is what the service found, with searchTotal how many it counted in
+	// all, and searchGen tells the answer of a search run meanwhile to drop.
+	// searchGrid and searchChosen are the results' gallery, as grid and
+	// chosen are the folder's.
+	searchURL      string
+	searchQuery    string
+	searchScope    string
+	searchPage     int
+	searchPageSize int
+	searchResults  []searchResult
+	searchTotal    int
+	searchErr      string
+	searchLoading  bool
+	searchGen      uint64
+	searchGrid     ui.GridState
+	searchChosen   int
 
 	// configJSON is the text of the config view's editor, and
 	// configPath is where Save writes it. configErr says what Save could
@@ -177,6 +199,10 @@ func newApp(root string) *app {
 		chosen:       -1,
 		tag:          -1,
 		pendingTag:   -1,
+		searchURL:    searchEndpoint,
+		searchScope:  root,
+		searchPage:   1,
+		searchChosen: -1,
 		sidebarWidth: 250,
 		thumbSlots:   make(chan struct{}, 4),
 	}
@@ -209,6 +235,11 @@ func (a *app) post(fn func()) {
 func (a *app) setRoot(dir string) {
 	if dir == "" {
 		return
+	}
+	// A scope left at the old root follows the new one; a scope the user
+	// set stays.
+	if a.searchScope == "" || a.searchScope == a.root {
+		a.searchScope = dir
 	}
 	a.root = dir
 	a.selected = dir
@@ -409,7 +440,8 @@ func (a *app) reload() {
 // requestThumb decodes a photo's thumbnail on a goroutine, once. The grid
 // asks only for the items it builds, which are those in view, so a large
 // folder decodes the thumbnails the user sees rather than all of them.
-func (a *app) requestThumb(gen uint64, p *photo) {
+// valid says whether the result still matters when it arrives.
+func (a *app) requestThumb(valid func() bool, p *photo) {
 	if p == nil || p.state != thumbIdle {
 		return
 	}
@@ -439,8 +471,8 @@ func (a *app) requestThumb(gen uint64, p *photo) {
 			img, width, height, err = decodeThumb(data, thumbMaxPixels)
 		}
 		a.post(func() {
-			if gen != a.galleryGen {
-				return // the folder changed while it decoded
+			if !valid() {
+				return // the folder or search changed while it decoded
 			}
 			if err != nil {
 				log.Printf("decoding %s: %v", path, err)
@@ -510,6 +542,8 @@ func (a *app) view(c *ui.Context) {
 		a.rail(c)
 		ui.Divider(c)
 		switch a.mode {
+		case viewSearch:
+			a.searchView(c)
 		case viewSingle:
 			a.singleView(c)
 		case viewConfig:
@@ -525,7 +559,8 @@ func (a *app) rail(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Width(railWidth).FillHeight().Padding(8, 0).Gap(6).AlignItems(ui.Center).Background(t.Background).Children(func() {
 		a.railButton(c, "File tree", "Show the file tree and gallery", treeIcon, a.mode == viewGallery, a.showGallery)
-		a.railButton(c, "Single image", "Show one image at a time", searchIcon, a.mode == viewSingle, a.showSingle)
+		a.railButton(c, "Search", "Search the folder's images", searchIcon, a.mode == viewSearch, a.showSearch)
+		a.railButton(c, "Single image", "Show one image at a time", eyeIcon, a.mode == viewSingle, a.showSingle)
 		a.railButton(c, "Config", "Edit the config", configIcon, a.mode == viewConfig, a.showConfig)
 	})
 }

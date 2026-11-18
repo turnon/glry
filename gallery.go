@@ -162,7 +162,7 @@ func (a *app) photoCell(c *ui.Context, p *photo) {
 		} else {
 			// A guarded job: only the cells the grid builds, which are
 			// those in view, ask for their thumbnail, and only once.
-			a.requestThumb(gen, p)
+			a.requestThumb(func() bool { return gen == a.galleryGen }, p)
 			ui.Column(c).Grow(1).Center().Children(func() {
 				if p.state == thumbFailed && showName {
 					ui.Text(c, "Can't open").FontSize(11).TextColor(t.TextMuted)
