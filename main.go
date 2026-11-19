@@ -156,14 +156,21 @@ type app struct {
 	tag        int
 	pendingTag int
 
-	// searchURL is where the search view asks for images; searchQuery,
+	// searchWay chooses how the search view finds images: through gmbd's
+	// HTTP service or through the SQLite vector database. gmbdURL is that
+	// service's address, sqlitePath the database, and embedURL/embedModel
+	// the service that embeds a query for the sqlite way. searchQuery,
 	// searchScope and searchPage are its inputs, and searchPageSize the
 	// largest page of results seen, which the page count uses. searchResults
-	// is what the service found, with searchTotal how many it counted in
+	// is what the search found, with searchTotal how many it counted in
 	// all, and searchGen tells the answer of a search run meanwhile to drop.
 	// searchGrid and searchChosen are the results' grid, as grid and
 	// chosen are the folders view's.
-	searchURL      string
+	searchWay      searchWay
+	gmbdURL        string
+	sqlitePath     string
+	embedURL       string
+	embedModel     string
 	searchQuery    string
 	searchScope    string
 	searchPage     int
@@ -196,6 +203,7 @@ type app struct {
 }
 
 func newApp(root string) *app {
+	d := defaultSettings()
 	a := &app{
 		root:         root,
 		selected:     root,
@@ -204,15 +212,19 @@ func newApp(root string) *app {
 		chosen:       -1,
 		tag:          -1,
 		pendingTag:   -1,
-		searchURL:    searchEndpoint,
+		searchWay:    d.searchWay,
+		gmbdURL:      gmbdEndpoint,
+		sqlitePath:   defaultSQLitePath(),
+		embedURL:     d.embedURL,
+		embedModel:   d.embedModel,
 		searchScope:  root,
 		searchPage:   1,
 		searchChosen: -1,
 		sidebarWidth: 250,
 		thumbSlots:   make(chan struct{}, 4),
 	}
-	a.setCellSize(defaultCellSize())
-	a.configJSON = configJSON(cellSize{width: a.cellWidth, height: a.cellHeight})
+	a.setCellSize(d.cell)
+	a.configJSON = configJSON(d)
 	a.async = func(fn func()) { go fn() }
 	return a
 }

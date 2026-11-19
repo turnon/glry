@@ -7,8 +7,10 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `main.go` — app state and startup: the rail and view switching, tree scanning, folder loading, thumbnails, and the window.
 - `folders.go` — the folders view: the sidebar's outline rows and the selected folder's grid of folder and photo cells, with their selection and the image count tag.
 - `single.go` — the single-image view: opening photos, zoom, pan, and the history tags with their kept views.
-- `search.go` — the search view: query/scope/page header, the search service request, and the results grid.
-- `config.go` — `~/.glry.json`: cell-size parsing and defaults, plus the config editor view.
+- `search.go` — the search view: query/scope/page header and the results grid.
+- `search_gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`.
+- `search_sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry.sqlite` and the query-embedding request.
+- `config.go` — `~/.glry.json`: cell-size and search settings, plus the config editor view.
 - `files.go` — reading folders, listing images, decoding thumbnails, and applying EXIF orientation.
 - `main_test.go` — tests for the views, folder scanning, thumbnails, search, and the single-image view.
 - `config_test.go` — tests for config parsing, defaults, and saving.

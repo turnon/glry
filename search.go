@@ -1,44 +1,19 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 )
 
-// The search view asks a local search service which images match a query,
-// within a folder scope, and shows what it finds as the folders view does.
-const (
-	searchEndpoint = "http://localhost:8500"
-	searchTimeout  = 20 * time.Second
-	// searchMaxBody bounds the response the view reads, so that a runaway
-	// service cannot exhaust the app's memory.
-	searchMaxBody = 8 << 20
-)
+// searchPageSize is how many images a search page holds.
+const searchPageSize = 20
 
 // searchResult is one image the search service found, with its score.
 type searchResult struct {
 	photo *photo
 	score float64
-}
-
-// searchResponse mirrors the search service's JSON: the images it found,
-// highest score first, and how many it holds in all.
-type searchResponse struct {
-	List []struct {
-		Path  string  `json:"path"`
-		Score float64 `json:"score"`
-	} `json:"list"`
-	Total int `json:"total"`
 }
 
 // showSearch opens the search view, keeping what the last search found.
@@ -288,7 +263,7 @@ func (a *app) openSearchResult(c *ui.Context) {
 	c.Invalidate()
 }
 
-// runSearch asks the search service for the images matching the query
+// runSearch asks the chosen backend for the images matching the query
 // within the scope, on a goroutine, replacing the results shown when it
 // answers.
 func (a *app) runSearch() {
@@ -305,7 +280,11 @@ func (a *app) runSearch() {
 	}
 	scope := strings.TrimSpace(a.searchScope)
 	page := max(a.searchPage, 1)
-	endpoint := a.searchURL
+	way := a.searchWay
+	gmbdURL := a.gmbdURL
+	sqlitePath := a.sqlitePath
+	embedURL := a.embedURL
+	embedModel := a.embedModel
 	a.searchGen++
 	gen := a.searchGen
 	a.searchErr = ""
@@ -315,7 +294,17 @@ func (a *app) runSearch() {
 	a.searchChosen = -1
 	a.searchGrid = ui.GridState{}
 	a.async(func() {
-		results, total, err := searchImages(endpoint, query, scope, page)
+		var (
+			results []searchResult
+			total   int
+			err     error
+		)
+		switch way {
+		case searchWaySQLite:
+			results, total, err = searchSQLite(sqlitePath, embedURL, embedModel, query, scope, page)
+		default:
+			results, total, err = searchGmbd(gmbdURL, query, scope, page)
+		}
 		a.post(func() {
 			if gen != a.searchGen {
 				return // another search ran meanwhile
@@ -332,60 +321,4 @@ func (a *app) runSearch() {
 			}
 		})
 	})
-}
-
-// searchImages asks the service at endpoint which images match query within
-// scope on page, and returns what it found and how many it counted in all.
-// It runs on a goroutine, so the photos it makes are ready for the
-// thumbnails the view asks for.
-func searchImages(endpoint, query, scope string, page int) ([]searchResult, int, error) {
-	target, err := url.Parse(strings.TrimSuffix(endpoint, "/") + "/search")
-	if err != nil {
-		return nil, 0, err
-	}
-	params := target.Query()
-	params.Set("query", query)
-	params.Set("scope", scope)
-	params.Set("page", strconv.Itoa(page))
-	target.RawQuery = params.Encode()
-
-	req, err := http.NewRequest(http.MethodGet, target.String(), nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: searchTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		msg := strings.TrimSpace(string(detail))
-		if msg == "" {
-			msg = http.StatusText(resp.StatusCode)
-		}
-		return nil, 0, fmt.Errorf("the search service answered %s: %s", resp.Status, msg)
-	}
-	var out searchResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, searchMaxBody)).Decode(&out); err != nil {
-		return nil, 0, fmt.Errorf("reading the search service's answer: %w", err)
-	}
-	results := make([]searchResult, 0, len(out.List))
-	for _, item := range out.List {
-		if item.Path == "" {
-			continue
-		}
-		p := &photo{path: item.Path, name: filepath.Base(item.Path)}
-		if info, err := os.Stat(item.Path); err == nil {
-			p.size = info.Size()
-		}
-		results = append(results, searchResult{photo: p, score: item.Score})
-	}
-	total := out.Total
-	if total < len(results) {
-		total = len(results)
-	}
-	return results, total, nil
 }

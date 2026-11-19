@@ -19,6 +19,45 @@ const (
 	defaultCellHeight = 176
 )
 
+// searchWay is how the search view finds images: through gmbd's HTTP
+// service, or through the SQLite vector database the app owns.
+type searchWay string
+
+const (
+	searchWayGmbd   searchWay = "gmbd"
+	searchWaySQLite searchWay = "sqlite"
+)
+
+// parseSearchWay reads a search.way value. An empty value is gmbd, so a
+// config written before the search settings existed keeps working.
+func parseSearchWay(s string) (searchWay, error) {
+	switch searchWay(strings.ToLower(strings.TrimSpace(s))) {
+	case searchWayGmbd, "":
+		return searchWayGmbd, nil
+	case searchWaySQLite:
+		return searchWaySQLite, nil
+	}
+	return "", fmt.Errorf(`search.way must be "gmbd" or "sqlite"`)
+}
+
+// settings is what the config file holds, once read: the size of a grid
+// cell and how the search view finds images.
+type settings struct {
+	cell       cellSize
+	searchWay  searchWay
+	embedURL   string
+	embedModel string
+}
+
+func defaultSettings() settings {
+	return settings{
+		cell:       defaultCellSize(),
+		searchWay:  searchWayGmbd,
+		embedURL:   defaultEmbedURL,
+		embedModel: defaultEmbedModel,
+	}
+}
+
 // cellSize is the size of a grid cell, in DIPs.
 type cellSize struct {
 	width, height float32
@@ -29,9 +68,12 @@ func defaultCellSize() cellSize {
 }
 
 // configFile mirrors ~/.glry.json. Sizes are written with a px suffix, as
-// {"cell": {"height": "176px", "width": "176px"}}.
+// {"cell": {"height": "176px", "width": "176px"}}, and embed sits beside
+// cell and search.
 type configFile struct {
-	Cell cellConfig `json:"cell"`
+	Cell   cellConfig   `json:"cell"`
+	Search searchConfig `json:"search"`
+	Embed  embedConfig  `json:"embed"`
 }
 
 type cellConfig struct {
@@ -39,11 +81,27 @@ type cellConfig struct {
 	Width  string `json:"width"`
 }
 
+// searchConfig chooses how the search view finds images. The embed config
+// beside it names the service that turns a query into the vector the
+// sqlite way matches.
+type searchConfig struct {
+	Way string `json:"way"`
+}
+
+type embedConfig struct {
+	URL   string `json:"url"`
+	Model string `json:"model"`
+}
+
 func defaultConfigFile() configFile {
-	return configFile{Cell: cellConfig{
-		Height: fmt.Sprintf("%dpx", defaultCellHeight),
-		Width:  fmt.Sprintf("%dpx", defaultCellWidth),
-	}}
+	return configFile{
+		Cell: cellConfig{
+			Height: fmt.Sprintf("%dpx", defaultCellHeight),
+			Width:  fmt.Sprintf("%dpx", defaultCellWidth),
+		},
+		Search: searchConfig{Way: string(searchWayGmbd)},
+		Embed:  embedConfig{URL: defaultEmbedURL, Model: defaultEmbedModel},
+	}
 }
 
 // formatPixels writes a size as the config file does, as 176px.
@@ -51,24 +109,29 @@ func formatPixels(v float32) string {
 	return strconv.FormatFloat(float64(v), 'f', -1, 32) + "px"
 }
 
-// configJSON formats size as the config file's JSON, for the config view.
-func configJSON(size cellSize) string {
-	cfg := configFile{Cell: cellConfig{
-		Width:  formatPixels(size.width),
-		Height: formatPixels(size.height),
-	}}
+// configJSON formats the settings as the config file's JSON, for the
+// config view.
+func configJSON(s settings) string {
+	cfg := configFile{
+		Cell: cellConfig{
+			Width:  formatPixels(s.cell.width),
+			Height: formatPixels(s.cell.height),
+		},
+		Search: searchConfig{Way: string(s.searchWay)},
+		Embed:  embedConfig{URL: s.embedURL, Model: s.embedModel},
+	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	return string(data) + "\n"
 }
 
 // configText is the text the config view edits: path's contents when the
-// file holds JSON, else the JSON of size.
-func configText(path string, size cellSize) string {
+// file holds JSON, else the JSON of s.
+func configText(path string, s settings) string {
 	data, err := os.ReadFile(path)
 	if err == nil && len(strings.TrimSpace(string(data))) > 0 {
 		return string(data)
 	}
-	return configJSON(size)
+	return configJSON(s)
 }
 
 // configPath is ~/.glry.json.
@@ -80,11 +143,11 @@ func configPath() string {
 	return filepath.Join(home, ".glry.json")
 }
 
-// loadConfig reads the cell size from path, making the file with defaults
+// loadConfig reads the settings from path, making the file with defaults
 // when it is absent. A file that cannot be read or understood leaves the
 // defaults in place.
-func loadConfig(path string) cellSize {
-	size := defaultCellSize()
+func loadConfig(path string) settings {
+	s := defaultSettings()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -94,28 +157,41 @@ func loadConfig(path string) cellSize {
 		} else {
 			log.Printf("reading %s: %v", path, err)
 		}
-		return size
+		return s
 	}
 	var cfg configFile
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		log.Printf("reading %s: %v", path, err)
-		return size
+		return s
 	}
 	if cfg.Cell.Width != "" {
 		if w, err := parsePixels(cfg.Cell.Width); err == nil {
-			size.width = w
+			s.cell.width = w
 		} else {
 			log.Printf("%s: cell width: %v", path, err)
 		}
 	}
 	if cfg.Cell.Height != "" {
 		if h, err := parsePixels(cfg.Cell.Height); err == nil {
-			size.height = h
+			s.cell.height = h
 		} else {
 			log.Printf("%s: cell height: %v", path, err)
 		}
 	}
-	return size
+	if cfg.Search.Way != "" {
+		if way, err := parseSearchWay(cfg.Search.Way); err == nil {
+			s.searchWay = way
+		} else {
+			log.Printf("%s: %v", path, err)
+		}
+	}
+	if cfg.Embed.URL != "" {
+		s.embedURL = strings.TrimSpace(cfg.Embed.URL)
+	}
+	if cfg.Embed.Model != "" {
+		s.embedModel = strings.TrimSpace(cfg.Embed.Model)
+	}
+	return s
 }
 
 // writeConfig writes cfg to path as JSON, making the directory as needed.
@@ -158,12 +234,16 @@ func parsePixels(s string) (float32, error) {
 	return float32(n), nil
 }
 
-// loadSettings reads path's config, applies its cell size, and puts the
+// loadSettings reads path's config, applies its settings, and puts the
 // file's JSON in the config view's editor.
 func (a *app) loadSettings(path string) {
 	a.configPath = path
-	a.setCellSize(loadConfig(path))
-	a.configJSON = configText(path, cellSize{width: a.cellWidth, height: a.cellHeight})
+	s := loadConfig(path)
+	a.setCellSize(s.cell)
+	a.searchWay = s.searchWay
+	a.embedURL = s.embedURL
+	a.embedModel = s.embedModel
+	a.configJSON = configText(path, s)
 	a.configErr = ""
 	if !json.Valid([]byte(a.configJSON)) {
 		a.configErr = "The config is not valid JSON."
@@ -186,7 +266,7 @@ func (a *app) configView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Background(t.Background).Padding(24).Gap(12).Children(func() {
 		ui.Text(c, "Config").FontSize(22).Bold()
-		ui.Text(c, "Edit the app's settings as JSON. Cell sizes are in pixels.").FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, "Edit the app's settings as JSON. Cell sizes are in pixels. search.way picks \"gmbd\" or \"sqlite\"; the sqlite way embeds the query through embed.").FontSize(12).TextColor(t.TextMuted)
 		editor := ui.TextArea(c, &a.configJSON).Label("Config JSON").Grow(1).FillWidth()
 		editor.Error(a.configErr)
 		editor.OnChange(func() {
@@ -212,10 +292,10 @@ func (a *app) configView(c *ui.Context) {
 	})
 }
 
-// saveConfig reads the editor's JSON, applies its cell size, and writes
-// it to the config file when there is one. Invalid JSON or sizes stay in
-// the editor with a message; a write that fails keeps the applied size and
-// says why.
+// saveConfig reads the editor's JSON, applies its settings, and writes
+// it to the config file when there is one. Invalid JSON or values stay in
+// the editor with a message; a write that fails keeps the applied settings
+// and says why.
 func (a *app) saveConfig() {
 	a.configErr = ""
 	a.configStatus = ""
@@ -236,8 +316,24 @@ func (a *app) saveConfig() {
 		a.configErr = "cell.height: " + err.Error()
 		return
 	}
+	way, err := parseSearchWay(cfg.Search.Way)
+	if err != nil {
+		a.configErr = "search.way: " + err.Error()
+		return
+	}
+	embedURL := strings.TrimSpace(cfg.Embed.URL)
+	if embedURL == "" {
+		embedURL = defaultEmbedURL
+	}
+	embedModel := strings.TrimSpace(cfg.Embed.Model)
+	if embedModel == "" {
+		embedModel = defaultEmbedModel
+	}
 
 	a.setCellSize(cellSize{width: width, height: height})
+	a.searchWay = way
+	a.embedURL = embedURL
+	a.embedModel = embedModel
 	if a.configPath == "" {
 		a.configStatus = "Applied."
 		return

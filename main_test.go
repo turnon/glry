@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -679,7 +681,7 @@ func TestSearchViewFindsImages(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(root)
-	a.searchURL = srv.URL
+	a.gmbdURL = srv.URL
 	a.searchQuery, a.searchScope = "beta", root
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.Click("Search"); err != nil {
@@ -727,7 +729,7 @@ func TestFoldersAndSearchKeepOwnState(t *testing.T) {
 
 	// Both views list images, each with the item it chose.
 	a := syncApp(root)
-	a.searchURL = srv.URL
+	a.gmbdURL = srv.URL
 	a.searchQuery = "beta"
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.Click("alpha.png"); err != nil {
@@ -789,7 +791,7 @@ func TestSearchResultKeepsFoldersView(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(root)
-	a.searchURL = srv.URL
+	a.gmbdURL = srv.URL
 	a.searchQuery = "beach"
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.Click("Search"); err != nil {
@@ -835,5 +837,139 @@ func TestSearchResultKeepsFoldersView(t *testing.T) {
 	}
 	if a.selected != root || !tt.HasText("alpha.png") || tt.HasText("beach.png") {
 		t.Errorf("the folders view shows folder %q: %q", a.selected, tt.Texts())
+	}
+}
+
+func TestSQLiteSearchFindsImages(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".glry.sqlite")
+	if err := ensureSQLiteDB(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageDir := filepath.Join(dir, "Images")
+	for i := 0; i < 60; i++ {
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1 - float32(i)/1000
+		_, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
+			fmt.Sprintf("a%02d.png", i), imageDir, "digest", vectorJSON(vector))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		model      string
+		input      []string
+		dimensions int
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body embedRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("reading the embed request: %v", err)
+		}
+		got.model, got.input, got.dimensions = body.Model, body.Input, body.Dimensions
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"embeddings":[%s]}`, vectorJSON(vector))
+	}))
+	defer srv.Close()
+
+	a := syncApp(dir)
+	a.searchWay = searchWaySQLite
+	a.sqlitePath = dbPath
+	a.embedURL = srv.URL
+	a.embedModel = "test-embed"
+	a.searchQuery = "red car"
+	a.searchScope = ""
+	a.searchPage = 1
+	a.runSearch()
+
+	if got.model != "test-embed" || got.dimensions != sqliteVectorDims ||
+		len(got.input) != 1 || got.input[0] != queryEmbeddingPrefix+"red car" {
+		t.Errorf("the query was embedded as %+v", got)
+	}
+	if len(a.searchResults) != searchPageSize {
+		t.Fatalf("page 1 found %d images, want %d", len(a.searchResults), searchPageSize)
+	}
+	if first, last := a.searchResults[0].photo.name, a.searchResults[len(a.searchResults)-1].photo.name; first != "a00.png" || last != "a19.png" {
+		t.Errorf("page 1 shows %s..%s, want a00..a19", first, last)
+	}
+	if a.searchTotal != 60 {
+		t.Errorf("the search counted %d images, want 60", a.searchTotal)
+	}
+
+	a.searchPage = 2
+	a.runSearch()
+	if len(a.searchResults) != searchPageSize {
+		t.Fatalf("page 2 found %d images, want %d", len(a.searchResults), searchPageSize)
+	}
+	if first, last := a.searchResults[0].photo.name, a.searchResults[len(a.searchResults)-1].photo.name; first != "a20.png" || last != "a39.png" {
+		t.Errorf("page 2 shows %s..%s, want a20..a39", first, last)
+	}
+}
+
+func TestSQLiteSearchFiltersScopeInSQL(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".glry.sqlite")
+	if err := ensureSQLiteDB(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aDir := filepath.Join(dir, "A")
+	bDir := filepath.Join(dir, "B")
+	for i := 0; i < 6; i++ {
+		imageDir := aDir
+		if i%2 == 1 {
+			imageDir = bDir
+		}
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1 - float32(i)/100
+		if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
+			fmt.Sprintf("a%d.png", i), imageDir, "digest", vectorJSON(vector)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"embeddings":[%s]}`, vectorJSON(vector))
+	}))
+	defer srv.Close()
+
+	a := syncApp(dir)
+	a.searchWay = searchWaySQLite
+	a.sqlitePath = dbPath
+	a.embedURL = srv.URL
+	a.searchQuery = "anything"
+	a.searchScope = bDir
+	a.searchPage = 1
+	a.runSearch()
+
+	if len(a.searchResults) != 3 {
+		t.Fatalf("the scoped search found %d images, want 3", len(a.searchResults))
+	}
+	for _, result := range a.searchResults {
+		if got := filepath.Dir(result.photo.path); got != bDir {
+			t.Errorf("%s is outside the scope %s", result.photo.path, bDir)
+		}
+	}
+	if a.searchTotal != 3 {
+		t.Errorf("the scoped search counted %d images, want 3", a.searchTotal)
 	}
 }
