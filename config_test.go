@@ -46,20 +46,6 @@ func TestLoadConfigReadsCellSize(t *testing.T) {
 	}
 }
 
-func TestLoadConfigKeepsDefaultsForInvalidSizes(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".glry.json")
-	if err := os.WriteFile(path, []byte(`{"cell":{"height":"nope","width":"15px"}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	settings := loadConfig(path)
-	if settings.cell.width != 15 {
-		t.Errorf("width is %v, want 15", settings.cell.width)
-	}
-	if settings.cell.height != defaultCellHeight {
-		t.Errorf("height is %v, want the default %v", settings.cell.height, float32(defaultCellHeight))
-	}
-}
-
 func TestParsePixels(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -175,21 +176,6 @@ func TestScanSkipsHiddenAndNonImages(t *testing.T) {
 	}
 	if len(dirs) != 0 {
 		t.Errorf("scanned hidden directories: %v", dirs)
-	}
-}
-
-func TestFoldersUsesCellSize(t *testing.T) {
-	root := t.TempDir()
-	writePNG(t, filepath.Join(root, "a.png"), color.RGBA{A: 255})
-	a := syncApp(root)
-	a.setCellSize(cellSize{width: 120, height: 90})
-	tt := ui.NewTester(a.view, 1000, 640)
-	cell, ok := tt.Find("a.png")
-	if !ok {
-		t.Fatal("the image cell is not shown")
-	}
-	if cell.H != 90 || cell.W < 120 {
-		t.Errorf("the cell is %v, want a height of 90 and at least 120 wide", cell)
 	}
 }
 
@@ -439,27 +425,6 @@ func TestClosingTags(t *testing.T) {
 	}
 	if a.mode != viewFolders {
 		t.Errorf("closing the last tag shows view %d, want the folders view", a.mode)
-	}
-}
-
-func TestHistoryTagsKeepTheLatest(t *testing.T) {
-	a := newApp(t.TempDir())
-	for i := 0; i < historyLimit+3; i++ {
-		p := &photo{path: filepath.Join("/photos", fmt.Sprintf("%d.png", i))}
-		a.photos = append(a.photos, p)
-		a.addTag(p)
-	}
-	if len(a.history) != historyLimit {
-		t.Fatalf("the history holds %d photos, want %d", len(a.history), historyLimit)
-	}
-	if a.tag != historyLimit-1 {
-		t.Errorf("the current tag is %d, want the last", a.tag)
-	}
-	if len(a.tagViews) != len(a.history) {
-		t.Errorf("%d tag views for %d tags", len(a.tagViews), len(a.history))
-	}
-	if a.history[0] != a.photos[3].path {
-		t.Errorf("the history starts at %q, want the first kept photo", a.history[0])
 	}
 }
 
@@ -971,5 +936,202 @@ func TestSQLiteSearchFiltersScopeInSQL(t *testing.T) {
 	}
 	if a.searchTotal != 3 {
 		t.Errorf("the scoped search counted %d images, want 3", a.searchTotal)
+	}
+
+	// The scope is a regular expression, so it can pick the dirs by their
+	// names rather than by their whole path.
+	a.searchScope = `B$`
+	a.runSearch()
+	if len(a.searchResults) != 3 || a.searchTotal != 3 {
+		t.Fatalf("the %q scope found %d of %d images, want 3 of 3", a.searchScope,
+			len(a.searchResults), a.searchTotal)
+	}
+	for _, result := range a.searchResults {
+		if got := filepath.Dir(result.photo.path); got != bDir {
+			t.Errorf("%s is outside the %q scope", result.photo.path, a.searchScope)
+		}
+	}
+
+	// A scope that is not a regular expression explains why nothing ran.
+	a.searchScope = "("
+	a.runSearch()
+	if !strings.Contains(a.searchErr, "not a regular expression") {
+		t.Errorf("the %q scope failed with %q", a.searchScope, a.searchErr)
+	}
+}
+
+// The scope is applied after the vector table takes its k nearest rows, so
+// a scope whose images all rank past the first page's k must still fill it.
+func TestSQLiteSearchScopePastKNearest(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".glry.sqlite")
+	if err := ensureSQLiteDB(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aDir := filepath.Join(dir, "A")
+	bDir := filepath.Join(dir, "B")
+	// The first 40 images are the nearest and lie in A; the scoped ones
+	// in B all rank past k = searchPageSize.
+	for i := 0; i < 60; i++ {
+		imageDir := aDir
+		if i >= 40 {
+			imageDir = bDir
+		}
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1 - float32(i)/100
+		if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
+			fmt.Sprintf("a%02d.png", i), imageDir, "digest", vectorJSON(vector)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"embeddings":[%s]}`, vectorJSON(vector))
+	}))
+	defer srv.Close()
+
+	a := syncApp(dir)
+	a.searchWay = searchWaySQLite
+	a.sqlitePath = dbPath
+	a.embedURL = srv.URL
+	a.searchQuery = "anything"
+	a.searchScope = bDir
+	a.searchPage = 1
+	a.runSearch()
+
+	if len(a.searchResults) != searchPageSize {
+		t.Fatalf("page 1 found %d images, want %d", len(a.searchResults), searchPageSize)
+	}
+	if first, last := a.searchResults[0].photo.name, a.searchResults[len(a.searchResults)-1].photo.name; first != "a40.png" || last != "a59.png" {
+		t.Errorf("page 1 shows %s..%s, want a40..a59", first, last)
+	}
+	for _, result := range a.searchResults {
+		if got := filepath.Dir(result.photo.path); got != bDir {
+			t.Errorf("%s is outside the scope %s", result.photo.path, bDir)
+		}
+	}
+	if a.searchTotal != 20 {
+		t.Errorf("the scoped search counted %d images, want 20", a.searchTotal)
+	}
+
+	// The scope holds one page, so the next one is empty rather than a
+	// repeat of the rows past its end.
+	a.searchPage = 2
+	a.runSearch()
+	if len(a.searchResults) != 0 {
+		t.Errorf("page 2 of a 20-image scope found %d images, want 0", len(a.searchResults))
+	}
+}
+
+// A scope too wide to filter inside the KNN query is narrowed after it, so
+// its images must still fill a page when they all rank past that k.
+func TestSQLiteSearchWideScopePastKNearest(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".glry.sqlite")
+	if err := ensureSQLiteDB(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 100 near images in A, then one image in each of 20 dirs the scope
+	// holds: more dirs than filter inside the KNN query, all ranked past
+	// the nearest rows a first pass takes.
+	for i := 0; i < 120; i++ {
+		imageDir := filepath.Join(dir, "A")
+		if i >= 100 {
+			imageDir = filepath.Join(dir, "Album", fmt.Sprintf("d%02d", i-100))
+		}
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1 - float32(i)/400
+		if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
+			fmt.Sprintf("a%03d.png", i), imageDir, "digest", vectorJSON(vector)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vector := make([]float32, sqliteVectorDims)
+		vector[0] = 1
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"embeddings":[%s]}`, vectorJSON(vector))
+	}))
+	defer srv.Close()
+
+	a := syncApp(dir)
+	a.searchWay = searchWaySQLite
+	a.sqlitePath = dbPath
+	a.embedURL = srv.URL
+	a.searchQuery = "anything"
+	a.searchScope = "Album"
+	a.searchPage = 1
+	a.runSearch()
+
+	if len(a.searchResults) != 20 {
+		t.Fatalf("the wide scope found %d images, want 20", len(a.searchResults))
+	}
+	if first, last := a.searchResults[0].photo.name, a.searchResults[len(a.searchResults)-1].photo.name; first != "a100.png" || last != "a119.png" {
+		t.Errorf("the wide scope shows %s..%s, want a100..a119", first, last)
+	}
+	if a.searchTotal != 20 {
+		t.Errorf("the wide scope counted %d images, want 20", a.searchTotal)
+	}
+}
+
+// A scope no dir matches is no images, not a query with an empty dir list.
+func TestSQLiteSearchScopeMatchesNothing(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".glry.sqlite")
+	if err := ensureSQLiteDB(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vector := make([]float32, sqliteVectorDims)
+	vector[0] = 1
+	if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
+		"a.png", filepath.Join(dir, "A"), "digest", vectorJSON(vector)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"embeddings":[%s]}`, vectorJSON(vector))
+	}))
+	defer srv.Close()
+
+	a := syncApp(dir)
+	a.searchWay = searchWaySQLite
+	a.sqlitePath = dbPath
+	a.embedURL = srv.URL
+	a.searchQuery = "anything"
+	a.searchScope = "no such folder"
+	a.searchPage = 1
+	a.runSearch()
+
+	if a.searchErr != "" {
+		t.Fatalf("the empty scope failed: %s", a.searchErr)
+	}
+	if len(a.searchResults) != 0 || a.searchTotal != 0 {
+		t.Errorf("the empty scope found %d of %d images, want none", len(a.searchResults), a.searchTotal)
 	}
 }

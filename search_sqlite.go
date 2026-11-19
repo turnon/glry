@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,13 @@ const (
 	// search query.
 	queryEmbeddingPrefix = "task: search result | query: "
 	sqliteMaxBody        = 8 << 20
+	// sqliteMaxK is the largest k a vec0 KNN query accepts, and so the
+	// furthest a page can reach.
+	sqliteMaxK = 4096
+	// sqliteScopeDirs is how many dirs a scope may hold for its filter to
+	// be pushed into the KNN query, where each one costs a pass over the
+	// dir column. Wider scopes narrow the nearest rows instead.
+	sqliteScopeDirs = 16
 )
 
 // sqliteSchema creates the images table on a new database. The id column
@@ -73,53 +81,171 @@ func searchSQLite(dbPath, embedURL, embedModel, query, scope string, page int) (
 	}
 	defer db.Close()
 
-	var total int
-	if scope == "" {
-		err = db.QueryRow(`select count(*) from images`).Scan(&total)
-	} else {
-		err = db.QueryRow(`select count(*) from images where dir like ?`, scopeLikePattern(scope)).Scan(&total)
+	// total is how many images the scope holds, which the view's pages
+	// count. A KNN query filters vec0 metadata with = or in only, so the
+	// scope's expression is matched here, over the dirs of the whole table,
+	// in the same pass that counts their images.
+	match, err := scopeMatch(scope)
+	if err != nil {
+		return nil, 0, err
 	}
+	dirs, total, err := sqliteScope(db, match)
 	if err != nil {
 		return nil, 0, fmt.Errorf("counting %s: %w", dbPath, err)
 	}
+	if total == 0 {
+		return []searchResult{}, 0, nil
+	}
 
-	// The vector table wants a vector as JSON text. Its k limit is the
-	// number of nearest rows to fetch, so page n asks for the first
-	// searchPageSize*n and keeps the last page of them.
+	// The vector table wants a vector as JSON text, and its k limit is the
+	// number of nearest rows it takes, 4096 at most. A page holds the rows
+	// from its offset up to the end of it, so k must reach the end while
+	// still leaving the scope's nearest need rows in hand.
 	page = max(page, 1)
-	k := searchPageSize * page
+	offset := (page - 1) * searchPageSize
+	need := min(offset+searchPageSize, sqliteMaxK)
 	vectorText := vectorJSON(vector)
-	var rows *sql.Rows
-	if scope == "" {
-		rows, err = db.Query(`
-			select dir || '/' || name as path, distance as score
-			from images
-			where vector match ? and k = ?
-			order by distance`, vectorText, k)
-	} else {
-		// sqlite-vec rejects LIKE directly on a vec0 column in a KNN
-		// query, so the nearest rows are materialized first and the
-		// scope is applied to them as SQL.
-		rows, err = db.Query(`
-			with knn as materialized (
-				select dir || '/' || name as path, dir, distance as score
-				from images
-				where vector match ? and k = ?
-			)
-			select path, score from knn where dir like ? order by score`,
-			vectorText, k, scopeLikePattern(scope))
+
+	var results []searchResult
+	switch {
+	case match == nil:
+		results, err = sqliteNearest(db, vectorText, nil, need)
+	case len(dirs) <= sqliteScopeDirs:
+		// The scope is narrow enough to filter inside the KNN query, so
+		// its k nearest rows are the nearest rows in scope.
+		results, err = sqliteNearestDirs(db, vectorText, dirs, need)
+	default:
+		// The scope is too wide to filter inside the KNN query, so the
+		// nearest rows are taken first and narrowed afterwards.
+		results, err = sqliteNearestInScope(db, vectorText, match, need)
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("searching %s: %w", dbPath, err)
 	}
-	defer rows.Close()
+	if offset < len(results) {
+		results = results[offset:]
+	} else {
+		results = results[:0]
+	}
+	if len(results) > searchPageSize {
+		results = results[:searchPageSize]
+	}
+	return results, total, nil
+}
 
-	results := make([]searchResult, 0, k)
+// scopeMatch compiles a scope into a matcher for a dir, using the scope as
+// the regular expression gmbd's scope was, or returns nil for no scope.
+func scopeMatch(scope string) (func(string) bool, error) {
+	if scope == "" {
+		return nil, nil
+	}
+	expression, err := regexp.Compile(scope)
+	if err != nil {
+		return nil, fmt.Errorf("the scope %q is not a regular expression: %w", scope, err)
+	}
+	return expression.MatchString, nil
+}
+
+// sqliteScope counts the images in scope and lists the dirs it matches. A
+// scope that matches no dir holds no images.
+func sqliteScope(db *sql.DB, match func(string) bool) ([]string, int, error) {
+	if match == nil {
+		var total int
+		err := db.QueryRow(`select count(*) from images`).Scan(&total)
+		return nil, total, err
+	}
+	rows, err := db.Query(`select dir, count(*) from images group by dir`)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var (
+		dirs  []string
+		total int
+	)
 	for rows.Next() {
-		var path string
+		var dir string
+		var n int
+		if err := rows.Scan(&dir, &n); err != nil {
+			return nil, 0, err
+		}
+		if !match(dir) {
+			continue
+		}
+		dirs = append(dirs, dir)
+		total += n
+	}
+	return dirs, total, rows.Err()
+}
+
+// sqliteNearestInScope takes the nearest rows that the scope matches. Each
+// pass takes k rows of the whole table and the scope narrows them after, so k
+// doubles until the scope fills the pages before the wanted one or the table
+// runs out.
+func sqliteNearestInScope(db *sql.DB, vectorText string, match func(string) bool, need int) ([]searchResult, error) {
+	var rows int
+	if err := db.QueryRow(`select count(*) from images`).Scan(&rows); err != nil {
+		return nil, err
+	}
+	for k := min(need, rows); ; k = min(k*2, rows) {
+		results, err := sqliteNearest(db, vectorText, match, k)
+		if err != nil {
+			return nil, err
+		}
+		if len(results) >= need || k >= rows || k >= sqliteMaxK {
+			return results, nil
+		}
+	}
+}
+
+// sqliteNearest takes the k rows nearest vector from the images table, keeps
+// those whose dir match accepts and returns them with their score, nearest
+// first. A nil match keeps every row.
+func sqliteNearest(db *sql.DB, vectorText string, match func(string) bool, k int) ([]searchResult, error) {
+	rows, err := db.Query(`
+		select dir, dir || '/' || name as path, distance as score
+		from images
+		where vector match ? and k = ?
+		order by distance`, vectorText, k)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteResults(rows, k, match)
+}
+
+// sqliteNearestDirs takes the k rows nearest vector among those in dirs. The
+// dirs are filtered by the vec0 scan itself, so k counts rows in scope.
+func sqliteNearestDirs(db *sql.DB, vectorText string, dirs []string, k int) ([]searchResult, error) {
+	args := make([]any, 0, len(dirs)+2)
+	args = append(args, vectorText, k)
+	for _, dir := range dirs {
+		args = append(args, dir)
+	}
+	rows, err := db.Query(`
+		select dir, dir || '/' || name as path, distance as score
+		from images
+		where vector match ? and k = ? and dir in (`+
+		strings.TrimSuffix(strings.Repeat("?,", len(dirs)), ",")+`)
+		order by distance`, args...)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteResults(rows, k, nil)
+}
+
+// sqliteResults reads a nearest-images query's dir, path and score columns,
+// keeping the rows whose dir match accepts. A nil match keeps every row.
+func sqliteResults(rows *sql.Rows, capacity int, match func(string) bool) ([]searchResult, error) {
+	defer rows.Close()
+	results := make([]searchResult, 0, capacity)
+	for rows.Next() {
+		var dir, path string
 		var score float64
-		if err := rows.Scan(&path, &score); err != nil {
-			return nil, 0, fmt.Errorf("reading %s: %w", dbPath, err)
+		if err := rows.Scan(&dir, &path, &score); err != nil {
+			return nil, err
+		}
+		if match != nil && !match(dir) {
+			continue
 		}
 		p := &photo{path: path, name: filepath.Base(path)}
 		if info, err := os.Stat(path); err == nil {
@@ -127,23 +253,7 @@ func searchSQLite(dbPath, embedURL, embedModel, query, scope string, page int) (
 		}
 		results = append(results, searchResult{photo: p, score: score})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("reading %s: %w", dbPath, err)
-	}
-	if len(results) > searchPageSize {
-		results = results[len(results)-searchPageSize:]
-	}
-	return results, total, nil
-}
-
-// scopeLikePattern turns a scope into a SQL LIKE pattern. A scope that
-// already holds a % wildcard is used as it is; otherwise it matches the
-// scope anywhere in the directory, as gmbd's regexp scope did.
-func scopeLikePattern(scope string) string {
-	if strings.Contains(scope, "%") {
-		return scope
-	}
-	return "%" + scope + "%"
+	return results, rows.Err()
 }
 
 // ensureSQLiteDB creates dbPath and its images table when they do not
