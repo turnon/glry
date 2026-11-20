@@ -19,7 +19,7 @@ import (
 	_ "modernc.org/sqlite/vec"
 )
 
-// The sqlite search way keeps image embeddings in ~/.glry.sqlite and ranks
+// The sqlite search way keeps image embeddings in ~/.glry/db.sqlite and ranks
 // them with sqlite-vec. A query is embedded by the service configured in
 // embed, then matched against the stored vectors.
 const (
@@ -54,13 +54,9 @@ create virtual table if not exists images using vec0(
 	vector float[768]
 )`
 
-// defaultSQLitePath is ~/.glry.sqlite.
+// defaultSQLitePath is ~/.glry/db.sqlite.
 func defaultSQLitePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ".glry.sqlite"
-	}
-	return filepath.Join(home, ".glry.sqlite")
+	return filepath.Join(glryDir(), "db.sqlite")
 }
 
 // searchSQLite embeds query, asks the SQLite vector table for the nearest

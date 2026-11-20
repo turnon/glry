@@ -67,7 +67,7 @@ func defaultCellSize() cellSize {
 	return cellSize{width: defaultCellWidth, height: defaultCellHeight}
 }
 
-// configFile mirrors ~/.glry.json. Sizes are written with a px suffix, as
+// configFile mirrors ~/.glry/config.json. Sizes are written with a px suffix, as
 // {"cell": {"height": "176px", "width": "176px"}}, and embed sits beside
 // cell and search.
 type configFile struct {
@@ -134,13 +134,18 @@ func configText(path string, s settings) string {
 	return configJSON(s)
 }
 
-// configPath is ~/.glry.json.
-func configPath() string {
+// glryDir is where the app keeps its files: ~/.glry.
+func glryDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return ".glry.json"
+		return ".glry"
 	}
-	return filepath.Join(home, ".glry.json")
+	return filepath.Join(home, ".glry")
+}
+
+// configPath is ~/.glry/config.json.
+func configPath() string {
+	return filepath.Join(glryDir(), "config.json")
 }
 
 // loadConfig reads the settings from path, making the file with defaults

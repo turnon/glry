@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadConfigCreatesDefaultFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".glry.json")
+	path := filepath.Join(t.TempDir(), "config.json")
 	settings := loadConfig(path)
 	if settings.cell != defaultCellSize() {
 		t.Errorf("loaded %+v, want defaults %+v", settings.cell, defaultCellSize())
@@ -33,7 +33,7 @@ func TestLoadConfigCreatesDefaultFile(t *testing.T) {
 }
 
 func TestLoadConfigReadsCellSize(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".glry.json")
+	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"cell":{"height":"20px","width":"15px"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestParsePixels(t *testing.T) {
 }
 
 func TestLoadConfigReadsSearchWay(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".glry.json")
+	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := `{"search":{"way":"sqlite"},"embed":{"url":"http://example.test/embed","model":"m"}}`
 	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestParseSearchWay(t *testing.T) {
 
 func TestSaveConfigAppliesSearchWay(t *testing.T) {
 	a := syncApp(t.TempDir())
-	path := filepath.Join(t.TempDir(), ".glry.json")
+	path := filepath.Join(t.TempDir(), "config.json")
 	a.configPath = path
 	a.configJSON = `{
 		"cell": {"height": "20px", "width": "15px"},

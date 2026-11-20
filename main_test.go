@@ -807,7 +807,7 @@ func TestSearchResultKeepsFoldersView(t *testing.T) {
 
 func TestSQLiteSearchFindsImages(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".glry.sqlite")
+	dbPath := filepath.Join(dir, "db.sqlite")
 	if err := ensureSQLiteDB(dbPath); err != nil {
 		t.Fatal(err)
 	}
@@ -883,7 +883,7 @@ func TestSQLiteSearchFindsImages(t *testing.T) {
 
 func TestSQLiteSearchFiltersScopeInSQL(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".glry.sqlite")
+	dbPath := filepath.Join(dir, "db.sqlite")
 	if err := ensureSQLiteDB(dbPath); err != nil {
 		t.Fatal(err)
 	}
@@ -964,7 +964,7 @@ func TestSQLiteSearchFiltersScopeInSQL(t *testing.T) {
 // a scope whose images all rank past the first page's k must still fill it.
 func TestSQLiteSearchScopePastKNearest(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".glry.sqlite")
+	dbPath := filepath.Join(dir, "db.sqlite")
 	if err := ensureSQLiteDB(dbPath); err != nil {
 		t.Fatal(err)
 	}
@@ -1037,7 +1037,7 @@ func TestSQLiteSearchScopePastKNearest(t *testing.T) {
 // its images must still fill a page when they all rank past that k.
 func TestSQLiteSearchWideScopePastKNearest(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".glry.sqlite")
+	dbPath := filepath.Join(dir, "db.sqlite")
 	if err := ensureSQLiteDB(dbPath); err != nil {
 		t.Fatal(err)
 	}
@@ -1095,7 +1095,7 @@ func TestSQLiteSearchWideScopePastKNearest(t *testing.T) {
 // A scope no dir matches is no images, not a query with an empty dir list.
 func TestSQLiteSearchScopeMatchesNothing(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, ".glry.sqlite")
+	dbPath := filepath.Join(dir, "db.sqlite")
 	if err := ensureSQLiteDB(dbPath); err != nil {
 		t.Fatal(err)
 	}
