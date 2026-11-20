@@ -23,6 +23,13 @@ const (
 	gmbdMaxBody = 8 << 20
 )
 
+// gmbd is the gmbd search way: it asks the gmbd service at url which images
+// match a query.
+type gmbd struct {
+	// url is the service's address.
+	url string
+}
+
 // gmbdSearchResponse mirrors the gmbd service's JSON: the images it found,
 // highest score first, and how many it holds in all.
 type gmbdSearchResponse struct {
@@ -33,12 +40,12 @@ type gmbdSearchResponse struct {
 	Total int `json:"total"`
 }
 
-// searchGmbd asks the gmbd service at a.gmbdURL which images match query
-// within scope on page, and returns what it found and how many it counted
-// in all. It runs on a goroutine, so the photos it makes are ready for the
+// search asks the gmbd service at g.url which images match query within
+// scope on page, and returns what it found and how many it counted in all.
+// It runs on a goroutine, so the photos it makes are ready for the
 // thumbnails the view asks for.
-func (a *app) searchGmbd(query, scope string, page int) ([]searchResult, int, error) {
-	target, err := url.Parse(strings.TrimSuffix(a.gmbdURL, "/") + "/search")
+func (g gmbd) search(query, scope string, page int) ([]searchResult, int, error) {
+	target, err := url.Parse(strings.TrimSuffix(g.url, "/") + "/search")
 	if err != nil {
 		return nil, 0, err
 	}

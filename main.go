@@ -156,17 +156,17 @@ type app struct {
 	tag        int
 	pendingTag int
 
-	// searchWay chooses how the search view finds images: through gmbd's
-	// HTTP service or through the SQLite vector database. gmbdURL is that
-	// service's address, sqlitePath the database, and embedURL/embedModel
-	// the service that embeds a query for the sqlite way. searchQuery,
-	// searchScope and searchPage are its inputs, and searchPageSize the
-	// largest page of results seen, which the page count uses. searchResults
-	// is what the search found, with searchTotal how many it counted in
-	// all, and searchGen tells the answer of a search run meanwhile to drop.
-	// searchGrid and searchChosen are the results' grid, as grid and
-	// chosen are the folders view's.
-	searchWay      searchWay
+	// searcher is the backend the search view asks: gmbd's HTTP service or
+	// the SQLite vector database. gmbdURL is that service's address, and
+	// sqlitePath the database, with embedURL/embedModel the service that
+	// embeds a query for the sqlite way. searchQuery, searchScope and
+	// searchPage are its inputs, and searchPageSize the largest page of
+	// results seen, which the page count uses. searchResults is what the
+	// search found, with searchTotal how many it counted in all, and
+	// searchGen tells the answer of a search run meanwhile to drop.
+	// searchGrid and searchChosen are the results' grid, as grid and chosen
+	// are the folders view's.
+	searcher       searcher
 	gmbdURL        string
 	sqlitePath     string
 	embedURL       string
@@ -212,7 +212,6 @@ func newApp(root string) *app {
 		chosen:       -1,
 		tag:          -1,
 		pendingTag:   -1,
-		searchWay:    d.searchWay,
 		gmbdURL:      gmbdEndpoint,
 		sqlitePath:   defaultSQLitePath(),
 		embedURL:     d.embedURL,
@@ -223,6 +222,7 @@ func newApp(root string) *app {
 		sidebarWidth: 250,
 		thumbSlots:   make(chan struct{}, 4),
 	}
+	a.setSearcher(d.searchWay)
 	a.setCellSize(d.cell)
 	a.configJSON = configJSON(d)
 	a.async = func(fn func()) { go fn() }

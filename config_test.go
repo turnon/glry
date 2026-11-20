@@ -119,8 +119,8 @@ func TestSaveConfigAppliesSearchWay(t *testing.T) {
 	if a.configErr != "" {
 		t.Fatalf("saving the config failed: %s", a.configErr)
 	}
-	if a.searchWay != searchWaySQLite || a.embedURL != "http://example.test/embed" || a.embedModel != "m" {
-		t.Errorf("the config applied %+v", a.searchWay)
+	if _, ok := a.searcher.(sqlite); !ok || a.embedURL != "http://example.test/embed" || a.embedModel != "m" {
+		t.Errorf("the config applied %+v", a.searcher)
 	}
 	if a.cellWidth != 15 || a.cellHeight != 20 {
 		t.Errorf("the config applied cell %v×%v", a.cellWidth, a.cellHeight)

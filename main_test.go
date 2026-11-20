@@ -28,6 +28,29 @@ func syncApp(root string) *app {
 	return a
 }
 
+// ensureSQLiteDB creates an empty images table at path, as the sqlite tests
+// fill it.
+func ensureSQLiteDB(path string) error {
+	return sqlite{path: path}.ensureDB()
+}
+
+// gmbdAt makes the app search through the gmbd service at url.
+func gmbdAt(a *app, url string) {
+	a.gmbdURL = url
+	a.setSearcher(searchWayGmbd)
+}
+
+// sqliteAt makes the app search the database at path.
+func sqliteAt(a *app, path string) {
+	a.sqlitePath = path
+	a.setSearcher(searchWaySQLite)
+}
+
+// vectorJSON writes a vector the way the sqlite tests store one.
+func vectorJSON(v []float32) string {
+	return sqlite{}.vectorJSON(v)
+}
+
 // singleViewNow is how the single image view shows its current tag's
 // photo.
 func singleViewNow(t *testing.T, a *app) *tagView {
@@ -646,7 +669,7 @@ func TestSearchViewFindsImages(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(root)
-	a.gmbdURL = srv.URL
+	gmbdAt(a, srv.URL)
 	a.searchQuery, a.searchScope = "beta", root
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.Click("Search"); err != nil {
@@ -694,7 +717,7 @@ func TestFoldersAndSearchKeepOwnState(t *testing.T) {
 
 	// Both views list images, each with the item it chose.
 	a := syncApp(root)
-	a.gmbdURL = srv.URL
+	gmbdAt(a, srv.URL)
 	a.searchQuery = "beta"
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.Click("alpha.png"); err != nil {
@@ -756,7 +779,7 @@ func TestSearchResultKeepsFoldersView(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(root)
-	a.gmbdURL = srv.URL
+	gmbdAt(a, srv.URL)
 	a.searchQuery = "beach"
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.Click("Search"); err != nil {
@@ -848,8 +871,7 @@ func TestSQLiteSearchFindsImages(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(dir)
-	a.searchWay = searchWaySQLite
-	a.sqlitePath = dbPath
+	sqliteAt(a, dbPath)
 	a.embedURL = srv.URL
 	a.embedModel = "test-embed"
 	a.searchQuery = "red car"
@@ -918,8 +940,7 @@ func TestSQLiteSearchFiltersScopeInSQL(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(dir)
-	a.searchWay = searchWaySQLite
-	a.sqlitePath = dbPath
+	sqliteAt(a, dbPath)
 	a.embedURL = srv.URL
 	a.searchQuery = "anything"
 	a.searchScope = bDir
@@ -1001,8 +1022,7 @@ func TestSQLiteSearchScopePastKNearest(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(dir)
-	a.searchWay = searchWaySQLite
-	a.sqlitePath = dbPath
+	sqliteAt(a, dbPath)
 	a.embedURL = srv.URL
 	a.searchQuery = "anything"
 	a.searchScope = bDir
@@ -1073,8 +1093,7 @@ func TestSQLiteSearchWideScopePastKNearest(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(dir)
-	a.searchWay = searchWaySQLite
-	a.sqlitePath = dbPath
+	sqliteAt(a, dbPath)
 	a.embedURL = srv.URL
 	a.searchQuery = "anything"
 	a.searchScope = "Album"
@@ -1120,8 +1139,7 @@ func TestSQLiteSearchScopeMatchesNothing(t *testing.T) {
 	defer srv.Close()
 
 	a := syncApp(dir)
-	a.searchWay = searchWaySQLite
-	a.sqlitePath = dbPath
+	sqliteAt(a, dbPath)
 	a.embedURL = srv.URL
 	a.searchQuery = "anything"
 	a.searchScope = "no such folder"

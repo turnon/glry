@@ -245,7 +245,7 @@ func (a *app) loadSettings(path string) {
 	a.configPath = path
 	s := loadConfig(path)
 	a.setCellSize(s.cell)
-	a.searchWay = s.searchWay
+	a.setSearcher(s.searchWay)
 	a.embedURL = s.embedURL
 	a.embedModel = s.embedModel
 	a.configJSON = configText(path, s)
@@ -336,7 +336,7 @@ func (a *app) saveConfig() {
 	}
 
 	a.setCellSize(cellSize{width: width, height: height})
-	a.searchWay = way
+	a.setSearcher(way)
 	a.embedURL = embedURL
 	a.embedModel = embedModel
 	if a.configPath == "" {

@@ -263,13 +263,19 @@ func (a *app) openSearchResult(c *ui.Context) {
 	c.Invalidate()
 }
 
-// search asks the chosen backend for the images matching query within scope
-// on page, and returns what it found and how many it counted in all.
-func (a *app) search(query, scope string, page int) ([]searchResult, int, error) {
-	if a.searchWay == searchWaySQLite {
-		return a.searchSQLite(query, scope, page)
+// searcher is a search way: it finds the images matching a query within a
+// scope, one page at a time.
+type searcher interface {
+	search(query, scope string, page int) ([]searchResult, int, error)
+}
+
+// setSearcher chooses the backend the search asks, from the configured way.
+func (a *app) setSearcher(way searchWay) {
+	if way == searchWaySQLite {
+		a.searcher = sqlite{path: a.sqlitePath, embed: a.query}
+		return
 	}
-	return a.searchGmbd(query, scope, page)
+	a.searcher = gmbd{url: a.gmbdURL}
 }
 
 // runSearch asks the chosen backend for the images matching the query
@@ -298,7 +304,7 @@ func (a *app) runSearch() {
 	a.searchChosen = -1
 	a.searchGrid = ui.GridState{}
 	a.async(func() {
-		results, total, err := a.search(query, scope, page)
+		results, total, err := a.searcher.search(query, scope, page)
 		a.post(func() {
 			if gen != a.searchGen {
 				return // another search ran meanwhile
