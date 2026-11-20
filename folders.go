@@ -35,10 +35,12 @@ func (a *app) treeRow(c *ui.Context, dir string) {
 	if dir == a.selected {
 		icon = t.Accent
 	}
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+	row := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center)
+	row.Children(func() {
 		ui.Icon(c, folderIcon).Size(14, 14).TextColor(icon)
-		ui.Text(c, rootName(dir)).SingleLine()
+		ui.Text(c, rootName(dir)).SingleLine().ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir) })
 	})
+	row.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir) })
 }
 
 func (a *app) folders(c *ui.Context) {
@@ -114,7 +116,7 @@ func (a *app) itemCell(c *ui.Context, i int) {
 	}
 	item := a.items[i]
 	if item.dir {
-		a.folderCell(c, item.name)
+		a.folderCell(c, item.path, item.name)
 		return
 	}
 	if item.photo != nil {
@@ -135,10 +137,11 @@ func (a *app) cellMetrics() (pad, gap, iconSize float32, showName bool) {
 	return
 }
 
-func (a *app) folderCell(c *ui.Context, name string) {
+func (a *app) folderCell(c *ui.Context, path, name string) {
 	t := c.Theme()
 	pad, gap, iconSize, showName := a.cellMetrics()
-	ui.Column(c).Fill().Padding(pad).Gap(gap).Children(func() {
+	cell := ui.Column(c).Fill().Padding(pad).Gap(gap)
+	cell.Children(func() {
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Icon(c, folderIcon).Size(iconSize, iconSize).TextColor(t.Accent)
 		})
@@ -146,6 +149,7 @@ func (a *app) folderCell(c *ui.Context, name string) {
 			ui.Text(c, name).FontSize(12).SingleLine().TextAlign(ui.Center).FillWidth().Tooltip(name)
 		}
 	})
+	cell.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, path) })
 }
 
 func (a *app) photoCell(c *ui.Context, p *photo) {
@@ -156,7 +160,8 @@ func (a *app) photoCell(c *ui.Context, p *photo) {
 	gen := a.foldersGen
 	pad, gap, iconSize, showName := a.cellMetrics()
 	showMeta := a.cellHeight >= 64 && a.cellWidth >= 60
-	ui.Column(c).Fill().Padding(pad).Gap(gap).Children(func() {
+	cell := ui.Column(c).Fill().Padding(pad).Gap(gap)
+	cell.Children(func() {
 		if p.img != nil {
 			ui.Image(c, p.img).Grow(1).Fit(ui.Contain).MinHeight(0)
 		} else {
@@ -181,6 +186,7 @@ func (a *app) photoCell(c *ui.Context, p *photo) {
 			ui.Text(c, p.name).FontSize(12).SingleLine().TextAlign(ui.Center).FillWidth().Tooltip(p.name)
 		}
 	})
+	cell.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, p.path) })
 }
 
 // photoDimensions names a photo's width and height in pixels.

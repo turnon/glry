@@ -33,6 +33,10 @@ func (a *app) searchView(c *ui.Context) {
 		a.searchHeader(c)
 		ui.Divider(c)
 		a.searchResultsView(c)
+		if a.indexPath != "" {
+			ui.Divider(c)
+			a.indexStatus(c)
+		}
 	})
 }
 
@@ -264,15 +268,16 @@ func (a *app) openSearchResult(c *ui.Context) {
 }
 
 // searcher is a search way: it finds the images matching a query within a
-// scope, one page at a time.
+// scope, one page at a time, and indexes the images at a path.
 type searcher interface {
 	search(query, scope string, page int) ([]searchResult, int, error)
+	index(path string) (chan struct{}, error)
 }
 
 // setSearcher chooses the backend the search asks, from the configured way.
 func (a *app) setSearcher(way searchWay) {
 	if way == searchWaySQLite {
-		a.searcher = sqlite{path: a.sqlitePath, embed: a.query}
+		a.searcher = sqlite{path: a.sqlitePath, embed: a.query, images: a.images, onError: a.indexFailed}
 		return
 	}
 	a.searcher = gmbd{url: a.gmbdURL}

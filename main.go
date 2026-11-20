@@ -183,6 +183,18 @@ type app struct {
 	searchGrid     ui.GridState
 	searchChosen   int
 
+	// indexPath is the image or folder the last index added, indexCount how
+	// many images it handled, and indexRunning whether it is still going.
+	// indexQueue holds the folders added while it runs. indexErr says why it
+	// could not start or stopped, and indexGen tells the progress of an index
+	// started meanwhile to drop.
+	indexPath    string
+	indexCount   int
+	indexQueue   []string
+	indexRunning bool
+	indexErr     string
+	indexGen     uint64
+
 	// configJSON is the text of the config view's editor, and
 	// configPath is where Save writes it. configErr says what Save could
 	// not read; configStatus says what Save did, and configStatusErr
