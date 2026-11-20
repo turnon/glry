@@ -33,12 +33,12 @@ type gmbdSearchResponse struct {
 	Total int `json:"total"`
 }
 
-// searchGmbd asks the gmbd service at endpoint which images match query
+// searchGmbd asks the gmbd service at a.gmbdURL which images match query
 // within scope on page, and returns what it found and how many it counted
 // in all. It runs on a goroutine, so the photos it makes are ready for the
 // thumbnails the view asks for.
-func searchGmbd(endpoint, query, scope string, page int) ([]searchResult, int, error) {
-	target, err := url.Parse(strings.TrimSuffix(endpoint, "/") + "/search")
+func (a *app) searchGmbd(query, scope string, page int) ([]searchResult, int, error) {
+	target, err := url.Parse(strings.TrimSuffix(a.gmbdURL, "/") + "/search")
 	if err != nil {
 		return nil, 0, err
 	}

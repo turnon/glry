@@ -831,7 +831,7 @@ func TestSQLiteSearchFindsImages(t *testing.T) {
 
 	var got struct {
 		model      string
-		input      []string
+		input      any
 		dimensions int
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -858,7 +858,7 @@ func TestSQLiteSearchFindsImages(t *testing.T) {
 	a.runSearch()
 
 	if got.model != "test-embed" || got.dimensions != sqliteVectorDims ||
-		len(got.input) != 1 || got.input[0] != queryEmbeddingPrefix+"red car" {
+		got.input != queryEmbeddingPrefix+"red car" {
 		t.Errorf("the query was embedded as %+v", got)
 	}
 	if len(a.searchResults) != searchPageSize {

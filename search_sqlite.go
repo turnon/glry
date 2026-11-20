@@ -2,18 +2,14 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	_ "modernc.org/sqlite"
 	_ "modernc.org/sqlite/vec"
@@ -23,16 +19,8 @@ import (
 // them with sqlite-vec. A query is embedded by the service configured in
 // embed, then matched against the stored vectors.
 const (
-	defaultEmbedURL   = "http://localhost:11434/api/embed"
-	defaultEmbedModel = "qwen3-embedding:4b"
 	// sqliteVectorDims is the width of the images.vector column.
 	sqliteVectorDims = 768
-	// embedTimeout lets the embedding service load a model on first use.
-	embedTimeout = 2 * time.Minute
-	// queryEmbeddingPrefix is what the embedding model expects before a
-	// search query.
-	queryEmbeddingPrefix = "task: search result | query: "
-	sqliteMaxBody        = 8 << 20
 	// sqliteMaxK is the largest k a vec0 KNN query accepts, and so the
 	// furthest a page can reach.
 	sqliteMaxK = 4096
@@ -62,11 +50,12 @@ func defaultSQLitePath() string {
 // searchSQLite embeds query, asks the SQLite vector table for the nearest
 // images, and returns the page wanted. It runs on a goroutine, so the
 // photos it makes are ready for the thumbnails the view asks for.
-func searchSQLite(dbPath, embedURL, embedModel, query, scope string, page int) ([]searchResult, int, error) {
+func (a *app) searchSQLite(query, scope string, page int) ([]searchResult, int, error) {
+	dbPath := a.sqlitePath
 	if err := ensureSQLiteDB(dbPath); err != nil {
 		return nil, 0, err
 	}
-	vector, err := embedQuery(embedURL, embedModel, query)
+	vector, err := a.query(query)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -282,78 +271,6 @@ func ensureSQLiteDB(path string) error {
 		return fmt.Errorf("creating the images table in %s: %w", path, err)
 	}
 	return nil
-}
-
-// embedRequest is Ollama's embed API body, which is also what an
-// OpenAI-compatible /v1/embeddings endpoint accepts.
-type embedRequest struct {
-	Model      string   `json:"model"`
-	Input      []string `json:"input"`
-	Dimensions int      `json:"dimensions,omitempty"`
-}
-
-// embedResponse holds either Ollama's embeddings or an OpenAI-compatible
-// data array.
-type embedResponse struct {
-	Embeddings [][]float32 `json:"embeddings"`
-	Data       []struct {
-		Embedding []float32 `json:"embedding"`
-	} `json:"data"`
-}
-
-// embedQuery turns query into the vector the sqlite way matches, through
-// the embedding service at endpoint.
-func embedQuery(endpoint, model, query string) ([]float32, error) {
-	if endpoint == "" {
-		endpoint = defaultEmbedURL
-	}
-	if model == "" {
-		model = defaultEmbedModel
-	}
-	body, err := json.Marshal(embedRequest{
-		Model:      model,
-		Input:      []string{queryEmbeddingPrefix + query},
-		Dimensions: sqliteVectorDims,
-	})
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(body)))
-	if err != nil {
-		return nil, fmt.Errorf("embedding %q: %w", query, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: embedTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("asking %s to embed the query: %w", endpoint, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		msg := strings.TrimSpace(string(detail))
-		if msg == "" {
-			msg = http.StatusText(resp.StatusCode)
-		}
-		return nil, fmt.Errorf("the embedding service answered %s: %s", resp.Status, msg)
-	}
-	var out embedResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, sqliteMaxBody)).Decode(&out); err != nil {
-		return nil, fmt.Errorf("reading the embedding service's answer: %w", err)
-	}
-	var vector []float32
-	if len(out.Embeddings) > 0 {
-		vector = out.Embeddings[0]
-	} else if len(out.Data) > 0 {
-		vector = out.Data[0].Embedding
-	}
-	if len(vector) == 0 {
-		return nil, fmt.Errorf("the embedding service returned no embedding for %q", query)
-	}
-	if len(vector) != sqliteVectorDims {
-		return nil, fmt.Errorf("the embedding has %d dimensions, want %d", len(vector), sqliteVectorDims)
-	}
-	return vector, nil
 }
 
 // vectorJSON writes a vector the way sqlite-vec reads one, as

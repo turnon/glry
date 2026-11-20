@@ -263,6 +263,15 @@ func (a *app) openSearchResult(c *ui.Context) {
 	c.Invalidate()
 }
 
+// search asks the chosen backend for the images matching query within scope
+// on page, and returns what it found and how many it counted in all.
+func (a *app) search(query, scope string, page int) ([]searchResult, int, error) {
+	if a.searchWay == searchWaySQLite {
+		return a.searchSQLite(query, scope, page)
+	}
+	return a.searchGmbd(query, scope, page)
+}
+
 // runSearch asks the chosen backend for the images matching the query
 // within the scope, on a goroutine, replacing the results shown when it
 // answers.
@@ -280,11 +289,6 @@ func (a *app) runSearch() {
 	}
 	scope := strings.TrimSpace(a.searchScope)
 	page := max(a.searchPage, 1)
-	way := a.searchWay
-	gmbdURL := a.gmbdURL
-	sqlitePath := a.sqlitePath
-	embedURL := a.embedURL
-	embedModel := a.embedModel
 	a.searchGen++
 	gen := a.searchGen
 	a.searchErr = ""
@@ -294,17 +298,7 @@ func (a *app) runSearch() {
 	a.searchChosen = -1
 	a.searchGrid = ui.GridState{}
 	a.async(func() {
-		var (
-			results []searchResult
-			total   int
-			err     error
-		)
-		switch way {
-		case searchWaySQLite:
-			results, total, err = searchSQLite(sqlitePath, embedURL, embedModel, query, scope, page)
-		default:
-			results, total, err = searchGmbd(gmbdURL, query, scope, page)
-		}
+		results, total, err := a.search(query, scope, page)
 		a.post(func() {
 			if gen != a.searchGen {
 				return // another search ran meanwhile
