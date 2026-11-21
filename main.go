@@ -232,7 +232,6 @@ func newApp(root string) *app {
 		sqlitePath:   defaultSQLitePath(),
 		embedURL:     d.embedURL,
 		embedModel:   d.embedModel,
-		searchScope:  root,
 		searchPage:   1,
 		searchChosen: -1,
 		sidebarWidth: 250,
@@ -268,11 +267,6 @@ func (a *app) post(fn func()) {
 func (a *app) setRoot(dir string) {
 	if dir == "" {
 		return
-	}
-	// A scope left at the old root follows the new one; a scope the user
-	// set stays.
-	if a.searchScope == "" || a.searchScope == a.root {
-		a.searchScope = dir
 	}
 	a.root = dir
 	a.selected = dir

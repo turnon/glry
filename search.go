@@ -75,6 +75,7 @@ func (a *app) searchHeader(c *ui.Context) {
 // scopeField is the scope input, with a clear icon inside it while it
 // holds a folder. The icon is the one SearchField draws, a filled circle
 // with a cross cut out of it, so that the two inputs' clear icons match.
+// The scope starts empty, which searches every folder.
 func (a *app) scopeField(c *ui.Context, submit func()) {
 	t := c.Theme()
 	ui.Box(c).Width(260).Children(func() {
