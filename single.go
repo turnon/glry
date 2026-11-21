@@ -482,6 +482,68 @@ func (a *app) showPhotoAt(i int) {
 	a.setSingle(i)
 }
 
+// openPhoto opens path in the single image view, as the Open menu item
+// does. When path is one of several chosen images, each chosen image gets
+// its own history tag, and the view steps through them alone; otherwise
+// path alone opens, and the view steps through the folder's images.
+func (a *app) openPhoto(c *ui.Context, path string) {
+	list, several := a.photos, false
+	if a.folderPick.selection.Has(path) {
+		chosen := make([]*photo, 0, a.folderPick.selection.Len())
+		for _, item := range a.items {
+			if item.photo != nil && a.folderPick.selection.Has(item.path) {
+				chosen = append(chosen, item.photo)
+			}
+		}
+		if len(chosen) > 1 {
+			list, several = chosen, true
+		}
+	}
+	at := photoIndex(list, path)
+	if at < 0 {
+		return
+	}
+	if !several {
+		if i := photoIndex(a.photos, path); i >= 0 {
+			a.showPhotoAt(i)
+		}
+		c.Invalidate()
+		return
+	}
+	clicked := -1
+	for _, p := range list {
+		tag := a.ensureTag(p)
+		if p.path == path {
+			clicked = tag
+		}
+	}
+	a.selectTag(clicked)
+	a.singlePhotos, a.single = list, at
+	c.Invalidate()
+}
+
+// ensureTag makes p a history tag, adding one when it has none, and
+// returns the tag's index.
+func (a *app) ensureTag(p *photo) int {
+	for j := len(a.history) - 1; j >= 0; j-- {
+		if a.history[j] == p.path {
+			return j
+		}
+	}
+	a.addTag(p)
+	return a.tag
+}
+
+// photoIndex returns the index of the photo at path in list, or -1.
+func photoIndex(list []*photo, path string) int {
+	for i, p := range list {
+		if p.path == path {
+			return i
+		}
+	}
+	return -1
+}
+
 // showInTag shows the images[i] the view steps through in the single
 // image view, renaming the tag the view is on rather than opening another.
 // The arrows step through them this way, even when another tag shows one

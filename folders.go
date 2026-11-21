@@ -45,6 +45,8 @@ func (a *app) treeRow(c *ui.Context, dir string) {
 
 func (a *app) folders(c *ui.Context) {
 	t := c.Theme()
+	m := a.folderGrid()
+	a.folderPick.built = a.folderPick.built[:0]
 	ui.Column(c).Fill().Children(func() {
 		switch {
 		case a.foldersErr != nil:
@@ -61,6 +63,7 @@ func (a *app) folders(c *ui.Context) {
 				return i
 			}
 			a.grid.Selected = &a.chosen
+			a.grid.Selection = &a.folderPick.selection
 			a.grid.Label = func(i int) string {
 				if i >= 0 && i < len(a.items) {
 					return a.items[i].name
@@ -68,8 +71,10 @@ func (a *app) folders(c *ui.Context) {
 				return ""
 			}
 			grid := ui.GridView(c, &a.grid, len(a.items), a.cellWidth, a.cellHeight, func(i int) {
-				a.itemCell(c, i)
+				a.itemCell(c, m, i)
 			}).Grow(1).Padding(12)
+			grid.HandleInput(func(ev ui.InputEvent) bool { return a.gridInput(c, m, &a.grid.Handle, ev) })
+			grid.DrawOver(func(p *ui.Painter, r ui.Rect) { a.paintGridDrag(p, r, &a.folderPick) })
 			if grid.Submitted() {
 				a.activateItem(c)
 			}
@@ -110,17 +115,37 @@ func (a *app) gridMessage(c *ui.Context, title, detail string, loading bool) {
 	})
 }
 
-func (a *app) itemCell(c *ui.Context, i int) {
+// folderGrid is the folders view's grid as choosing items needs it.
+func (a *app) folderGrid() gridModel {
+	return gridModel{
+		pick:     &a.folderPick,
+		selected: &a.chosen,
+		count:    func() int { return len(a.items) },
+		key: func(i int) string {
+			if i >= 0 && i < len(a.items) {
+				return a.items[i].path
+			}
+			return ""
+		},
+		open: func(c *ui.Context, i int) {
+			a.chosen = i
+			a.activateItem(c)
+		},
+	}
+}
+
+func (a *app) itemCell(c *ui.Context, m gridModel, i int) {
 	if i < 0 || i >= len(a.items) {
 		return
 	}
+	a.folderPick.built = append(a.folderPick.built, i)
 	item := a.items[i]
 	if item.dir {
-		a.folderCell(c, item.path, item.name)
+		a.folderCell(c, m, i, item.path, item.name)
 		return
 	}
 	if item.photo != nil {
-		a.photoCell(c, item.photo)
+		a.photoCell(c, m, i, item.photo)
 	}
 }
 
@@ -137,10 +162,11 @@ func (a *app) cellMetrics() (pad, gap, iconSize float32, showName bool) {
 	return
 }
 
-func (a *app) folderCell(c *ui.Context, path, name string) {
+func (a *app) folderCell(c *ui.Context, m gridModel, i int, path, name string) {
 	t := c.Theme()
 	pad, gap, iconSize, showName := a.cellMetrics()
 	cell := ui.Column(c).Fill().Padding(pad).Gap(gap)
+	a.bindGridCell(c, m, cell, i)
 	cell.Children(func() {
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Icon(c, folderIcon).Size(iconSize, iconSize).TextColor(t.Accent)
@@ -149,10 +175,10 @@ func (a *app) folderCell(c *ui.Context, path, name string) {
 			ui.Text(c, name).FontSize(12).SingleLine().TextAlign(ui.Center).FillWidth().Tooltip(name)
 		}
 	})
-	cell.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, path) })
+	cell.ContextMenu(func(m *ui.Menu) { a.indexGridMenuItem(m, path) })
 }
 
-func (a *app) photoCell(c *ui.Context, p *photo) {
+func (a *app) photoCell(c *ui.Context, m gridModel, i int, p *photo) {
 	if p == nil {
 		return
 	}
@@ -161,6 +187,7 @@ func (a *app) photoCell(c *ui.Context, p *photo) {
 	pad, gap, iconSize, showName := a.cellMetrics()
 	showMeta := a.cellHeight >= 64 && a.cellWidth >= 60
 	cell := ui.Column(c).Fill().Padding(pad).Gap(gap)
+	a.bindGridCell(c, m, cell, i)
 	cell.Children(func() {
 		if p.img != nil {
 			ui.Image(c, p.img).Grow(1).Fit(ui.Contain).MinHeight(0)
@@ -186,7 +213,30 @@ func (a *app) photoCell(c *ui.Context, p *photo) {
 			ui.Text(c, p.name).FontSize(12).SingleLine().TextAlign(ui.Center).FillWidth().Tooltip(p.name)
 		}
 	})
-	cell.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, p.path) })
+	cell.ContextMenu(func(m *ui.Menu) {
+		a.openPhotoMenuItem(c, m, p.path)
+		a.indexGridMenuItem(m, p.path)
+	})
+}
+
+// openPhotoMenuItem adds the item that opens path, or the images chosen
+// with it, in the single image view.
+func (a *app) openPhotoMenuItem(c *ui.Context, m *ui.Menu, path string) {
+	if m.Item("Open").Chosen() {
+		a.openPhoto(c, path)
+	}
+}
+
+// bindGridCell gives the cell of item i its stable handle, which a drag
+// uses as its place in the window, and the input that chooses items.
+func (a *app) bindGridCell(c *ui.Context, m gridModel, cell ui.Element, i int) {
+	if i < 0 || i >= len(m.pick.handles) {
+		return
+	}
+	cell.Bind(&m.pick.handles[i])
+	cell.HandleInput(func(ev ui.InputEvent) bool {
+		return a.gridCellInput(c, m, i, &m.pick.handles[i], ev)
+	})
 }
 
 // photoDimensions names a photo's width and height in pixels.

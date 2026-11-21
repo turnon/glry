@@ -162,6 +162,8 @@ func (a *app) searchResultsView(c *ui.Context) {
 		return
 	}
 	gen := a.searchGen
+	m := a.searchGridModel()
+	a.searchPick.built = a.searchPick.built[:0]
 	ui.Column(c).Fill().Children(func() {
 		a.searchGrid.Key = func(i int) any {
 			if i >= 0 && i < len(a.searchResults) {
@@ -170,6 +172,7 @@ func (a *app) searchResultsView(c *ui.Context) {
 			return i
 		}
 		a.searchGrid.Selected = &a.searchChosen
+		a.searchGrid.Selection = &a.searchPick.selection
 		a.searchGrid.Label = func(i int) string {
 			if i >= 0 && i < len(a.searchResults) {
 				return a.searchResults[i].photo.name
@@ -177,16 +180,38 @@ func (a *app) searchResultsView(c *ui.Context) {
 			return ""
 		}
 		grid := ui.GridView(c, &a.searchGrid, len(a.searchResults), a.cellWidth, a.cellHeight, func(i int) {
-			a.searchCell(c, gen, i)
+			a.searchCell(c, gen, m, i)
 		}).Grow(1).Padding(12)
-		if grid.Submitted() {
-			a.openSearchResult(c)
+		grid.HandleInput(func(ev ui.InputEvent) bool { return a.gridInput(c, m, &a.searchGrid.Handle, ev) })
+		grid.DrawOver(func(p *ui.Painter, r ui.Rect) { a.paintGridDrag(p, r, &a.searchPick) })
+		if grid.Submitted() && a.searchChosen >= 0 && a.searchChosen < len(a.searchResults) {
+			a.openSearchPhotos(c, a.searchResults[a.searchChosen].photo.path)
 		}
 	})
 }
 
+// searchGridModel is the search results' grid as choosing items needs it.
+func (a *app) searchGridModel() gridModel {
+	return gridModel{
+		pick:     &a.searchPick,
+		selected: &a.searchChosen,
+		count:    func() int { return len(a.searchResults) },
+		key: func(i int) string {
+			if i >= 0 && i < len(a.searchResults) && a.searchResults[i].photo != nil {
+				return a.searchResults[i].photo.path
+			}
+			return ""
+		},
+		open: func(c *ui.Context, i int) {
+			if i >= 0 && i < len(a.searchResults) && a.searchResults[i].photo != nil {
+				a.openSearchPhotos(c, a.searchResults[i].photo.path)
+			}
+		},
+	}
+}
+
 // searchCell shows one image the search found, with its score.
-func (a *app) searchCell(c *ui.Context, gen uint64, i int) {
+func (a *app) searchCell(c *ui.Context, gen uint64, m gridModel, i int) {
 	if i < 0 || i >= len(a.searchResults) {
 		return
 	}
@@ -195,10 +220,13 @@ func (a *app) searchCell(c *ui.Context, gen uint64, i int) {
 	if p == nil {
 		return
 	}
+	a.searchPick.built = append(a.searchPick.built, i)
 	t := c.Theme()
 	pad, gap, iconSize, showName := a.cellMetrics()
 	showMeta := a.cellHeight >= 64 && a.cellWidth >= 60
-	ui.Column(c).Fill().Padding(pad).Gap(gap).Children(func() {
+	cell := ui.Column(c).Fill().Padding(pad).Gap(gap)
+	a.bindGridCell(c, m, cell, i)
+	cell.Children(func() {
 		if p.img != nil {
 			ui.Image(c, p.img).Grow(1).Fit(ui.Contain).MinHeight(0)
 		} else {
@@ -220,6 +248,55 @@ func (a *app) searchCell(c *ui.Context, gen uint64, i int) {
 				TextAlign(ui.Center).FillWidth().Tooltip(p.path)
 		}
 	})
+	cell.ContextMenu(func(menu *ui.Menu) {
+		if menu.Item("Open").Chosen() {
+			a.openSearchPhotos(c, p.path)
+		}
+	})
+}
+
+// openSearchPhotos opens path, or the results chosen with it, in the
+// single image view. Several chosen results each get a history tag, and
+// the view steps through them alone; one opens and steps through all the
+// results, as choosing it with Enter does.
+func (a *app) openSearchPhotos(c *ui.Context, path string) {
+	if a.searchPick.selection.Has(path) {
+		photos := make([]*photo, 0, a.searchPick.selection.Len())
+		at, clicked := -1, -1
+		for _, result := range a.searchResults {
+			p := result.photo
+			if p == nil || !a.searchPick.selection.Has(p.path) {
+				continue
+			}
+			if p.path == path {
+				at = len(photos)
+			}
+			photos = append(photos, p)
+		}
+		if len(photos) > 1 && at >= 0 {
+			for _, p := range photos {
+				tag := a.ensureTag(p)
+				if p.path == path {
+					clicked = tag
+				}
+			}
+			if clicked >= 0 {
+				a.tag = clicked
+			}
+			a.clearSingle()
+			a.setSingleIn(photos, at)
+			c.Invalidate()
+			return
+		}
+	}
+	a.searchChosen = -1
+	for i, result := range a.searchResults {
+		if result.photo != nil && result.photo.path == path {
+			a.searchChosen = i
+			break
+		}
+	}
+	a.openSearchResult(c)
 }
 
 // openSearchResult shows the chosen result alone, stepping through the
@@ -297,6 +374,7 @@ func (a *app) runSearch() {
 		a.searchTotal = 0
 		a.searchChosen = -1
 		a.searchGrid = ui.GridState{}
+		a.searchPick = gridPick{pivot: -1}
 		return
 	}
 	scope := strings.TrimSpace(a.searchScope)
@@ -309,6 +387,7 @@ func (a *app) runSearch() {
 	a.searchTotal = 0
 	a.searchChosen = -1
 	a.searchGrid = ui.GridState{}
+	a.searchPick = gridPick{pivot: -1}
 	a.async(func() {
 		results, total, err := a.searcher.search(query, scope, page)
 		a.post(func() {
@@ -322,6 +401,8 @@ func (a *app) runSearch() {
 			}
 			a.searchResults = results
 			a.searchTotal = total
+			a.searchPick.handles = make([]ui.Handle, len(results))
+			a.searchPick.built = a.searchPick.built[:0]
 			if len(results) > a.searchPageSize {
 				a.searchPageSize = len(results)
 			}

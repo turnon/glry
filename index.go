@@ -90,6 +90,35 @@ func (a *app) indexMenuItem(m *ui.Menu, path string) {
 	}
 }
 
+// indexGridMenuItem adds the item that indexes path to a folders view
+// cell's context menu. When path is one of the chosen items, it indexes
+// all of them, in the grid's order.
+func (a *app) indexGridMenuItem(m *ui.Menu, path string) {
+	if m.Item("Index").Chosen() {
+		for _, p := range a.indexTargets(path) {
+			a.startIndex(p)
+		}
+	}
+}
+
+// indexTargets returns the paths the Index menu item of path applies to:
+// the chosen items when path is one of them, else path alone.
+func (a *app) indexTargets(path string) []string {
+	if a.folderPick.selection.Len() == 0 || !a.folderPick.selection.Has(path) {
+		return []string{path}
+	}
+	paths := make([]string, 0, a.folderPick.selection.Len())
+	for _, item := range a.items {
+		if a.folderPick.selection.Has(item.path) {
+			paths = append(paths, item.path)
+		}
+	}
+	if len(paths) == 0 {
+		return []string{path}
+	}
+	return paths
+}
+
 // indexStatus shows how far the last index got, at the bottom of a view.
 func (a *app) indexStatus(c *ui.Context) {
 	if a.indexPath == "" {

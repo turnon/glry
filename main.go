@@ -118,6 +118,11 @@ type app struct {
 	grid           ui.GridState
 	chosen         int
 
+	// folderPick and searchPick hold each grid's choice of several items,
+	// as Cmd-click and a drag over it choose them.
+	folderPick gridPick
+	searchPick gridPick
+
 	// mode chooses between the folders view, the search, the single
 	// image view and the config. singlePhotos is the images the single
 	// view's arrows step through, and single the index into them: the
@@ -225,6 +230,8 @@ func newApp(root string) *app {
 		dirs:         map[string][]string{},
 		dirsLoading:  map[string]bool{},
 		chosen:       -1,
+		folderPick:   gridPick{pivot: -1},
+		searchPick:   gridPick{pivot: -1},
 		tag:          -1,
 		pendingTag:   -1,
 		tagShown:     -1,
@@ -393,6 +400,7 @@ func (a *app) loadImages() {
 	a.thumbOrder = nil
 	a.grid = ui.GridState{}
 	a.chosen = -1
+	a.folderPick = gridPick{pivot: -1}
 	a.foldersErr = nil
 	a.foldersLoading = dir != ""
 	if dir == "" {
@@ -452,6 +460,8 @@ func (a *app) buildFolderItems() {
 	for _, p := range a.photos {
 		a.items = append(a.items, folderItem{path: p.path, name: p.name, photo: p})
 	}
+	a.folderPick.handles = make([]ui.Handle, len(a.items))
+	a.folderPick.built = a.folderPick.built[:0]
 }
 
 // reload scans the selected folder and its subdirectories again.
