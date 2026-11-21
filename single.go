@@ -355,12 +355,17 @@ func (a *app) historyTags(c *ui.Context) {
 					face(ui.Button(c, name).FontSize(12).Grow(1).MinWidth(0).
 						Padding(6, 10).Radius(0).Tooltip(name), on, hover).
 						OnClick(func() { a.selectTag(j) })
-					face(ui.Button(c, "").Label("Close "+name).Tooltip("Close this tag").
+					// The close icon has no tooltip: under the pointer it turns red,
+					// which says what it does without a hint over the header.
+					close := face(ui.Button(c, "").Label("Close "+name).
 						Padding(6, 8).Radius(0).Shrink(0), on, hover).
-						OnClick(func() { a.closeTag(j) }).
-						Children(func() {
-							ui.Icon(c, closeIcon).Size(10, 10)
-						})
+						OnClick(func() { a.closeTag(j) })
+					if close.Hovered() {
+						close.TextColor(t.Danger)
+					}
+					close.Children(func() {
+						ui.Icon(c, closeIcon).Size(10, 10)
+					})
 				})
 			}
 		})
