@@ -646,7 +646,7 @@ func byteSize(n int64) string {
 }
 
 // defaultRoot starts at a folder given on the command line, else the
-// user's Pictures, else their home.
+// user's home.
 func defaultRoot() string {
 	if len(os.Args) > 1 {
 		if abs, err := filepath.Abs(os.Args[1]); err == nil {
@@ -655,14 +655,7 @@ func defaultRoot() string {
 			}
 		}
 	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		for _, name := range []string{"Pictures", "Photos"} {
-			dir := filepath.Join(home, name)
-			if st, err := os.Stat(dir); err == nil && st.IsDir() {
-				return dir
-			}
-		}
+	if home, err := os.UserHomeDir(); err == nil {
 		return home
 	}
 	if wd, err := os.Getwd(); err == nil {
