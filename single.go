@@ -30,8 +30,11 @@ func (a *app) singleView(c *ui.Context) {
 			// so that the header is theirs and the one showing. The line
 			// below runs under the tags too, and the tag showing covers
 			// it with the viewer's background, so that it looks one with
-			// the photo below.
-			ui.Row(c).AlignItems(ui.Stretch).Wrap().Background(t.Surface).Children(func() {
+			// the photo below. Too many tags for the window scroll
+			// sideways rather than wrap, so that the header keeps the
+			// height of one row of them.
+			ui.Row(c).AlignItems(ui.Stretch).Background(t.Surface).
+				Bind(&a.headerRef).Children(func() {
 				ui.Box(c).Absolute().Bottom(0).Left(0).Right(0).Height(1).
 					Background(t.Border).IgnoreInput(true).ZIndex(-1)
 				a.historyTags(c)
@@ -297,8 +300,11 @@ const tagWidth = 150
 // view shows, so opening an image elsewhere keeps the ones opened before.
 // Its close icon on the right drops it. The tag showing takes the viewer's
 // background, as a tab of a tab bar does, so that it looks one with the
-// photo below, and the accent marks it with a line along its top. The
-// header has no line along its top, as the search view's header has none.
+// photo below, and the accent marks it with a line along its top. A line
+// along a tag's sides sets it apart from the header and the tags beside
+// it. The header has no line along its top, as the search view's header
+// has none. Tags past the window's width scroll sideways, so that opening
+// more of them never grows the header: arrows at its right step them.
 func (a *app) historyTags(c *ui.Context) {
 	t := c.Theme()
 	// face styles a part of a tag: every part leaves room for the line, so
@@ -320,24 +326,119 @@ func (a *app) historyTags(c *ui.Context) {
 		}
 		return e
 	}
-	for j, path := range a.history {
-		j, name := j, filepath.Base(path)
-		on := j == a.tag
-		c.Key(j)
-		row := ui.Row(c).AlignItems(ui.Stretch).Gap(0).Width(tagWidth).Shrink(0)
-		hover := !on && row.Hovered()
-		row.Children(func() {
-			face(ui.Button(c, name).FontSize(12).Grow(1).MinWidth(0).
-				Padding(6, 10).Radius(0).Tooltip(name), on, hover).
-				OnClick(func() { a.selectTag(j) })
-			face(ui.Button(c, "").Label("Close "+name).Tooltip("Close this tag").
-				Padding(6, 8).Radius(0).Shrink(0), on, hover).
-				OnClick(func() { a.closeTag(j) }).
-				Children(func() {
-					ui.Icon(c, closeIcon).Size(10, 10)
+	// The tag showing comes into view as it changes, as one opened past
+	// the right edge does, but scrolling the tags leaves it where it is.
+	a.revealTag(c)
+	ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Bind(&a.tagsRef).
+		TrackScroll(&a.tagScroll).Scrollbars(false).Children(func() {
+		ui.Row(c).AlignItems(ui.Stretch).Children(func() {
+			for j, path := range a.history {
+				j, name := j, filepath.Base(path)
+				on := j == a.tag
+				c.Key(j)
+				// The line between two tags is the left border of the one
+				// after, so that it stays one line thick, and the last tag
+				// ends the row with a line on its right. The row of tags
+				// opens with none.
+				right := float32(0)
+				if j == len(a.history)-1 {
+					right = 1
+				}
+				left := float32(0)
+				if j > 0 {
+					left = 1
+				}
+				row := ui.Row(c).AlignItems(ui.Stretch).Gap(0).Width(tagWidth).Shrink(0).
+					BorderWidth(0, right, 0, left).BorderColor(t.Border)
+				hover := !on && row.Hovered()
+				row.Children(func() {
+					face(ui.Button(c, name).FontSize(12).Grow(1).MinWidth(0).
+						Padding(6, 10).Radius(0).Tooltip(name), on, hover).
+						OnClick(func() { a.selectTag(j) })
+					face(ui.Button(c, "").Label("Close "+name).Tooltip("Close this tag").
+						Padding(6, 8).Radius(0).Shrink(0), on, hover).
+						OnClick(func() { a.closeTag(j) }).
+						Children(func() {
+							ui.Icon(c, closeIcon).Size(10, 10)
+						})
 				})
+			}
 		})
+	})
+	// The arrows take room from the tags while they show, so whether the
+	// tags overflow is told from the header's width, which they leave be.
+	if w := a.headerRef.Bounds(c).W; w > 0 && float32(len(a.history))*tagWidth > w {
+		a.tagArrows(c)
 	}
+}
+
+// tagArrows are the arrows that step the header's tags sideways while the
+// window is too narrow for them all, on its right.
+func (a *app) tagArrows(c *ui.Context) {
+	t := c.Theme()
+	s := &a.tagScroll
+	ui.Row(c).Shrink(0).AlignItems(ui.Stretch).
+		BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
+		a.tagArrow(c, "Scroll the tags left", chevronLeftIcon, s.X <= 0, func() {
+			s.X = max(s.X-tagWidth, 0)
+			c.Invalidate()
+		})
+		a.tagArrow(c, "Scroll the tags right", chevronRightIcon, s.X >= s.MaxX, func() {
+			s.X = min(s.X+tagWidth, s.MaxX)
+			c.Invalidate()
+		})
+	})
+}
+
+// tagArrow is one arrow of the header's tags, disabled when they do not
+// reach that way. Its label names it to assistive technology too.
+func (a *app) tagArrow(c *ui.Context, label string, icon *ui.SVG, disabled bool, onClick func()) {
+	t := c.Theme()
+	btn := ui.ButtonBase(c).Label(label).Tooltip(label).
+		Padding(0, 8).Radius(0).Disabled(disabled).OnClick(onClick)
+	btn.Children(func() {
+		ui.Icon(c, icon).Size(14, 14)
+	})
+	if disabled {
+		btn.TextColor(t.TextMuted)
+		return
+	}
+	switch {
+	case btn.Pressed():
+		btn.Background(t.SurfacePressed)
+	case btn.Hovered():
+		btn.Background(t.SurfaceHover)
+	}
+}
+
+// revealTag scrolls the header's tags sideways so that the tag showing
+// shows, as one opened past the right edge does. It leaves the tags where
+// they are while the tag showing is the one it brought into view, so that
+// the arrows can carry them away from it.
+func (a *app) revealTag(c *ui.Context) {
+	if a.tagShown == a.tag {
+		return
+	}
+	a.tagShown = a.tag
+	if a.tag < 0 {
+		return
+	}
+	// The room the tags show in, as the frame before laid it out: the
+	// first frame has none to read yet, and a row opening with tags
+	// starts at the left anyway.
+	view := a.tagsRef.Bounds(c).W
+	if view <= 0 {
+		return
+	}
+	content := float32(len(a.history)) * tagWidth
+	left, right := float32(a.tag)*tagWidth, float32(a.tag+1)*tagWidth
+	x := a.tagScroll.X
+	if left < x {
+		x = left
+	} else if right > x+view {
+		x = right - view
+	}
+	a.tagScroll.X = min(max(x, 0), max(content-view, 0))
 }
 
 // showPhoto shows p alone in the single image view.
@@ -460,15 +561,15 @@ func (a *app) closeTag(j int) {
 	}
 }
 
-// addTag adds p to the header as the current tag, letting go of the
-// oldest tag beyond historyLimit and of the view kept with it.
+// addTag adds p to the header as the current tag.
 func (a *app) addTag(p *photo) {
+	if len(a.history) == 0 {
+		// The header starts over with the first tag it shows.
+		a.tagScroll = ui.ScrollState{}
+		a.tagShown = -1
+	}
 	a.history = append(a.history, p.path)
 	a.tagViews = append(a.tagViews, tagView{zoom: minSingleZoom})
-	if len(a.history) > historyLimit {
-		a.history = a.history[1:]
-		a.tagViews = a.tagViews[1:]
-	}
 	a.tag = len(a.history) - 1
 }
 

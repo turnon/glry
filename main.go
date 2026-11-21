@@ -26,10 +26,6 @@ var (
 	closeIcon        = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`))
 )
 
-// historyLimit is how many photos the single image view's header tags
-// hold, letting go of the ones shown first.
-const historyLimit = 5
-
 // railWidth is the width of the bar that chooses the view.
 const railWidth = 48
 
@@ -152,9 +148,16 @@ type app struct {
 	// view is on. The arrows rename that tag instead of adding one, so two
 	// tags can show the same photo. Tags outlive the folder the view shows;
 	// pendingTag is the tag whose photo a loading folder has yet to show.
+	// tagScroll is how far the header's tags scrolled sideways, in the room
+	// tagsRef measures, and tagShown the tag they last brought into view.
+	// headerRef is the room the header has, before the arrows take any.
 	history    []string
 	tag        int
 	pendingTag int
+	tagScroll  ui.ScrollState
+	tagsRef    ui.Handle
+	headerRef  ui.Handle
+	tagShown   int
 
 	// searcher is the backend the search view asks: gmbd's HTTP service or
 	// the SQLite vector database. gmbdURL is that service's address, and
@@ -224,6 +227,7 @@ func newApp(root string) *app {
 		chosen:       -1,
 		tag:          -1,
 		pendingTag:   -1,
+		tagShown:     -1,
 		gmbdURL:      gmbdEndpoint,
 		sqlitePath:   defaultSQLitePath(),
 		embedURL:     d.embedURL,
