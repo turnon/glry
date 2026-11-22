@@ -33,8 +33,7 @@ func (a *app) singleView(c *ui.Context) {
 			// the photo below. Too many tags for the window scroll
 			// sideways rather than wrap, so that the header keeps the
 			// height of one row of them.
-			ui.Row(c).AlignItems(ui.Stretch).Background(t.Surface).
-				Bind(&a.headerRef).Children(func() {
+			ui.Row(c).AlignItems(ui.Stretch).Background(t.Surface).Children(func() {
 				ui.Box(c).Absolute().Bottom(0).Left(0).Right(0).Height(1).
 					Background(t.Border).IgnoreInput(true).ZIndex(-1)
 				a.historyTags(c)
@@ -304,7 +303,8 @@ const tagWidth = 150
 // along a tag's sides sets it apart from the header and the tags beside
 // it. The header has no line along its top, as the search view's header
 // has none. Tags past the window's width scroll sideways, so that opening
-// more of them never grows the header: arrows at its right step them.
+// more of them never grows the header: a bar along the header's bottom
+// shows how much of them is out of sight, and drags them.
 func (a *app) historyTags(c *ui.Context) {
 	t := c.Theme()
 	// face styles a part of a tag: every part leaves room for the line, so
@@ -329,97 +329,58 @@ func (a *app) historyTags(c *ui.Context) {
 	// The tag showing comes into view as it changes, as one opened past
 	// the right edge does, but scrolling the tags leaves it where it is.
 	a.revealTag(c)
+	// The bar is thin and low enough to run along the foot of the tags,
+	// within the room their padding leaves, rather than over their names.
 	ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Bind(&a.tagsRef).
-		TrackScroll(&a.tagScroll).Scrollbars(false).Children(func() {
-		ui.Row(c).AlignItems(ui.Stretch).Children(func() {
-			for j, path := range a.history {
-				j, name := j, filepath.Base(path)
-				on := j == a.tag
-				c.Key(j)
-				// The line between two tags is the left border of the one
-				// after, so that it stays one line thick, and the last tag
-				// ends the row with a line on its right. The row of tags
-				// opens with none.
-				right := float32(0)
-				if j == len(a.history)-1 {
-					right = 1
-				}
-				left := float32(0)
-				if j > 0 {
-					left = 1
-				}
-				row := ui.Row(c).AlignItems(ui.Stretch).Gap(0).Width(tagWidth).Shrink(0).
-					BorderWidth(0, right, 0, left).BorderColor(t.Border)
-				hover := !on && row.Hovered()
-				row.Children(func() {
-					face(ui.Button(c, name).FontSize(12).Grow(1).MinWidth(0).
-						Padding(6, 10).Radius(0).Tooltip(name), on, hover).
-						OnClick(func() { a.selectTag(j) })
-					// The close icon has no tooltip: under the pointer it turns red,
-					// which says what it does without a hint over the header.
-					close := face(ui.Button(c, "").Label("Close "+name).
-						Padding(6, 8).Radius(0).Shrink(0), on, hover).
-						OnClick(func() { a.closeTag(j) })
-					if close.Hovered() {
-						close.TextColor(t.Danger)
+		TrackScroll(&a.tagScroll).ScrollbarAxes(true, false).
+		KeepScrollbars(true).ScrollbarInsets(0, 0, 1, 0).
+		ScrollbarStyle(ui.ScrollbarStyle{TrackWidth: 8, ThumbWidth: 4, MinLength: 24}).
+		Children(func() {
+			ui.Row(c).AlignItems(ui.Stretch).Children(func() {
+				for j, path := range a.history {
+					j, name := j, filepath.Base(path)
+					on := j == a.tag
+					c.Key(j)
+					// The line between two tags is the left border of the one
+					// after, so that it stays one line thick, and the last tag
+					// ends the row with a line on its right. The row of tags
+					// opens with none.
+					right := float32(0)
+					if j == len(a.history)-1 {
+						right = 1
 					}
-					close.Children(func() {
-						ui.Icon(c, closeIcon).Size(10, 10)
+					left := float32(0)
+					if j > 0 {
+						left = 1
+					}
+					row := ui.Row(c).AlignItems(ui.Stretch).Gap(0).Width(tagWidth).Shrink(0).
+						BorderWidth(0, right, 0, left).BorderColor(t.Border)
+					hover := !on && row.Hovered()
+					row.Children(func() {
+						face(ui.Button(c, name).FontSize(12).Grow(1).MinWidth(0).
+							Padding(6, 10).Radius(0).Tooltip(name), on, hover).
+							OnClick(func() { a.selectTag(j) })
+						// The close icon has no tooltip: under the pointer it turns red,
+						// which says what it does without a hint over the header.
+						close := face(ui.Button(c, "").Label("Close "+name).
+							Padding(6, 8).Radius(0).Shrink(0), on, hover).
+							OnClick(func() { a.closeTag(j) })
+						if close.Hovered() {
+							close.TextColor(t.Danger)
+						}
+						close.Children(func() {
+							ui.Icon(c, closeIcon).Size(10, 10)
+						})
 					})
-				})
-			}
+				}
+			})
 		})
-	})
-	// The arrows take room from the tags while they show, so whether the
-	// tags overflow is told from the header's width, which they leave be.
-	if w := a.headerRef.Bounds(c).W; w > 0 && float32(len(a.history))*tagWidth > w {
-		a.tagArrows(c)
-	}
-}
-
-// tagArrows are the arrows that step the header's tags sideways while the
-// window is too narrow for them all, on its right.
-func (a *app) tagArrows(c *ui.Context) {
-	t := c.Theme()
-	s := &a.tagScroll
-	ui.Row(c).Shrink(0).AlignItems(ui.Stretch).
-		BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
-		a.tagArrow(c, "Scroll the tags left", chevronLeftIcon, s.X <= 0, func() {
-			s.X = max(s.X-tagWidth, 0)
-			c.Invalidate()
-		})
-		a.tagArrow(c, "Scroll the tags right", chevronRightIcon, s.X >= s.MaxX, func() {
-			s.X = min(s.X+tagWidth, s.MaxX)
-			c.Invalidate()
-		})
-	})
-}
-
-// tagArrow is one arrow of the header's tags, disabled when they do not
-// reach that way. Its label names it to assistive technology too.
-func (a *app) tagArrow(c *ui.Context, label string, icon *ui.SVG, disabled bool, onClick func()) {
-	t := c.Theme()
-	btn := ui.ButtonBase(c).Label(label).Tooltip(label).
-		Padding(0, 8).Radius(0).Disabled(disabled).OnClick(onClick)
-	btn.Children(func() {
-		ui.Icon(c, icon).Size(14, 14)
-	})
-	if disabled {
-		btn.TextColor(t.TextMuted)
-		return
-	}
-	switch {
-	case btn.Pressed():
-		btn.Background(t.SurfacePressed)
-	case btn.Hovered():
-		btn.Background(t.SurfaceHover)
-	}
 }
 
 // revealTag scrolls the header's tags sideways so that the tag showing
 // shows, as one opened past the right edge does. It leaves the tags where
 // they are while the tag showing is the one it brought into view, so that
-// the arrows can carry them away from it.
+// scrolling the tags can carry them away from it.
 func (a *app) revealTag(c *ui.Context) {
 	if a.tagShown == a.tag {
 		return
