@@ -196,6 +196,9 @@ func TestIndexFromAppCopiesAndSkipsKnownImages(t *testing.T) {
 		}
 		vectors = append(vectors, vector)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	if len(vectors) != 2 || vectors[0] != vectors[1] {
 		t.Errorf("the copies have vectors %v, want the same vector", vectors)
 	}
