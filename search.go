@@ -63,8 +63,25 @@ func (a *app) searchHeader(c *ui.Context) {
 			Placeholder("Words to look for").Grow(1).MaxWidth(480).
 			OnSubmit(submit)
 		a.scopeField(c, submit)
+		a.groupSwitch(c)
 		ui.PrimaryButton(c, "Submit").Tooltip("Run the search").OnClick(submit)
 	})
+}
+
+// groupSwitch is the switch that groups the results by their directory,
+// after the scope.
+func (a *app) groupSwitch(c *ui.Context) {
+	switchEl := ui.Switch(c, &a.searchGroup).Label("group by dir").
+		Tooltip("Group the results by their directory")
+	ui.Text(c, "group by dir").FontSize(12).TextColor(c.Theme().TextMuted).
+		Cursor(ui.CursorPointer).AccessHidden(true).
+		OnClick(func() {
+			a.searchGroup = !a.searchGroup
+			a.toggleSearchGroup()
+		})
+	if switchEl.Changed() {
+		a.toggleSearchGroup()
+	}
 }
 
 // scopeField is the scope input, with a clear icon inside it while it
@@ -98,7 +115,8 @@ func (a *app) scopeField(c *ui.Context, submit func()) {
 
 // searchResultsView shows what the search found: a message for a search on its
 // way, one that failed or one that found nothing, and otherwise the images
-// as the folders view does, asking for more as the grid nears its end.
+// as the folders view does, asking for more as the grid nears its end, or
+// as rows of one directory grouped when the switch is on.
 func (a *app) searchResultsView(c *ui.Context) {
 	t := c.Theme()
 	switch {
@@ -116,6 +134,10 @@ func (a *app) searchResultsView(c *ui.Context) {
 		return
 	case len(a.searchResults) == 0:
 		a.gridMessage(c, "No images found", "Try another query or scope.", false)
+		return
+	}
+	if a.searchGroup {
+		a.searchGroupsView(c)
 		return
 	}
 	gen := a.searchGen
@@ -194,22 +216,44 @@ func (a *app) searchGridModel() gridModel {
 	}
 }
 
-// searchCell shows one image the search found, with its score.
+// searchCell shows one image the search found, with its score. Its place
+// in the grid binds it, at the result it shows.
 func (a *app) searchCell(c *ui.Context, gen uint64, m gridModel, i int) {
-	if i < 0 || i >= len(a.searchResults) {
+	a.searchResultCell(c, gen, m, i, i, 0, 0)
+}
+
+// searchResultCell shows result index as the cell at slot, sized to width
+// and height when the grouped rows give them, else filling its grid cell.
+func (a *app) searchResultCell(c *ui.Context, gen uint64, m gridModel, slot, index int, width, height float32) {
+	if index < 0 || index >= len(a.searchResults) {
 		return
 	}
-	result := a.searchResults[i]
+	result := a.searchResults[index]
 	p := result.photo
 	if p == nil {
 		return
 	}
-	a.searchPick.built = append(a.searchPick.built, i)
+	a.searchPick.built = append(a.searchPick.built, slot)
 	t := c.Theme()
 	pad, gap, iconSize, showName := a.cellMetrics()
 	showMeta := a.cellHeight >= 64 && a.cellWidth >= 60
 	cell := ui.Column(c).Fill().Padding(pad).Gap(gap)
-	a.bindGridCell(c, m, cell, i)
+	grouped := width > 0 && height > 0
+	if grouped {
+		cell = ui.Column(c).Size(width, height).Shrink(0).Padding(pad).Gap(gap).
+			Radius(t.Radius).Border(2, ui.Color{})
+		chosen, hovered := m.pick.selection.Has(p.path), cell.Hovered()
+		switch {
+		case chosen:
+			cell.Background(t.Accent.Alpha(0.2)).Border(2, t.Accent)
+			if hovered {
+				cell.Background(t.Accent.Alpha(0.28))
+			}
+		case hovered:
+			cell.Background(t.SurfacePressed)
+		}
+	}
+	a.bindGridCell(c, m, cell, slot)
 	cell.Children(func() {
 		if p.img != nil {
 			ui.Image(c, p.img).Grow(1).Fit(ui.Contain).MinHeight(0)
@@ -338,6 +382,7 @@ type searcher interface {
 
 // setSearcher chooses the backend the search asks, from the configured way.
 func (a *app) setSearcher(way searchWay) {
+	a.searchScoreAsc = way == searchWaySQLite
 	if way == searchWaySQLite {
 		a.searcher = sqlite{path: a.sqlitePath, embed: a.query, images: a.images, onError: a.indexFailed}
 		return
@@ -365,6 +410,7 @@ func (a *app) runSearch() {
 		a.searchLaid = -1
 		a.searchGrid = ui.GridState{}
 		a.searchPick = gridPick{pivot: -1}
+		a.resetSearchGroups()
 		return
 	}
 	scope := strings.TrimSpace(a.searchScope)
@@ -384,6 +430,7 @@ func (a *app) runSearch() {
 	a.searchLaid = -1
 	a.searchGrid = ui.GridState{}
 	a.searchPick = gridPick{pivot: -1}
+	a.resetSearchGroups()
 	a.async(func() {
 		results, total, err := a.searcher.search(query, scope, page)
 		a.post(func() {
@@ -400,6 +447,9 @@ func (a *app) runSearch() {
 			a.searchedNoMore = len(results) == 0 || len(results) >= total
 			a.searchPick.handles = make([]ui.Handle, len(results))
 			a.searchPick.built = a.searchPick.built[:0]
+			if a.searchGroup {
+				a.rebuildSearchGroups()
+			}
 		})
 	})
 }
@@ -439,6 +489,9 @@ func (a *app) loadMoreSearch() {
 			before := len(a.searchResults)
 			a.searchResults = append(a.searchResults, results...)
 			a.searchPick.handles = append(a.searchPick.handles, make([]ui.Handle, len(results))...)
+			if a.searchGroup {
+				a.rebuildSearchGroups()
+			}
 			if len(results) == 0 || len(a.searchResults) == before || len(a.searchResults) >= a.searchTotal {
 				a.searchedNoMore = true
 			}

@@ -199,6 +199,21 @@ type app struct {
 	searchGrid     ui.GridState
 	searchChosen   int
 
+	// searchGroup tells that the results show grouped by directory. The
+	// groups hold each directory's loaded results, most matched first, and
+	// searchGroupFlat is those results in the order the rows show them.
+	// searchGroupRows keeps each directory's sideways place and the batch
+	// it shows, searchGroupList keeps the rows' place, and
+	// searchGroupChosen is the grouped image chosen. searchScoreAsc tells
+	// that a lower score matches better, as the sqlite way's distance does.
+	searchGroup       bool
+	searchScoreAsc    bool
+	searchGroups      []searchGroup
+	searchGroupFlat   []int
+	searchGroupChosen int
+	searchGroupRows   map[string]*searchDirRow
+	searchGroupList   ui.ListState
+
 	// indexPath is the image or folder the last index added, indexCount how
 	// many images it handled, and indexRunning whether it is still going.
 	// indexQueue holds the folders added while it runs. indexErr says why it
@@ -233,26 +248,28 @@ type app struct {
 func newApp(root string) *app {
 	d := defaultSettings()
 	a := &app{
-		root:         root,
-		selected:     root,
-		dirs:         map[string][]string{},
-		dirsLoading:  map[string]bool{},
-		chosen:       -1,
-		revealChosen: -1,
-		folderPick:   gridPick{pivot: -1},
-		searchPick:   gridPick{pivot: -1},
-		tag:          -1,
-		pendingTag:   -1,
-		tagShown:     -1,
-		gmbdURL:      gmbdEndpoint,
-		sqlitePath:   defaultSQLitePath(),
-		embedURL:     d.embedURL,
-		embedModel:   d.embedModel,
-		searchPage:   1,
-		searchLaid:   -1,
-		searchChosen: -1,
-		sidebarWidth: 250,
-		thumbSlots:   make(chan struct{}, 4),
+		root:              root,
+		selected:          root,
+		dirs:              map[string][]string{},
+		dirsLoading:       map[string]bool{},
+		chosen:            -1,
+		revealChosen:      -1,
+		folderPick:        gridPick{pivot: -1},
+		searchPick:        gridPick{pivot: -1},
+		tag:               -1,
+		pendingTag:        -1,
+		tagShown:          -1,
+		gmbdURL:           gmbdEndpoint,
+		sqlitePath:        defaultSQLitePath(),
+		embedURL:          d.embedURL,
+		embedModel:        d.embedModel,
+		searchPage:        1,
+		searchLaid:        -1,
+		searchChosen:      -1,
+		searchGroupChosen: -1,
+		searchGroupRows:   map[string]*searchDirRow{},
+		sidebarWidth:      250,
+		thumbSlots:        make(chan struct{}, 4),
 	}
 	a.setSearcher(d.searchWay)
 	a.setCellSize(d.cell)
