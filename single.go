@@ -568,13 +568,7 @@ func (a *app) setSingle(i int) {
 		return
 	}
 	a.setSingleIn(a.photos, i)
-	p := a.photos[i]
-	for j, item := range a.items {
-		if item.path == p.path {
-			a.chosen = j
-			break
-		}
-	}
+	a.choosePhotoPath(a.photos[i].path)
 }
 
 // setSingleIn shows list[i] in the single image view, whose arrows step

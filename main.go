@@ -102,8 +102,16 @@ type app struct {
 	tree        ui.OutlineState[string]
 	dirRow      int
 	// pendingTreePath is a folder the folders view chose, which the tree
-	// selects once its row is built.
-	pendingTreePath string
+	// selects once its row is built. pendingPhotoPath is a photo the single
+	// image view was on, which the folders view shows with its folder and
+	// chooses among its items once they load. revealChosen is that item,
+	// which the grid scrolls into view, and revealLaid tells that the grid
+	// offered it the width it had before the folder loaded, so that the
+	// scroll waits for the width it has now.
+	pendingTreePath  string
+	pendingPhotoPath string
+	revealChosen     int
+	revealLaid       bool
 
 	// items is the folders view's grid: the selected folder's
 	// subdirectories first, then its images. photos is those images
@@ -234,6 +242,7 @@ func newApp(root string) *app {
 		dirs:         map[string][]string{},
 		dirsLoading:  map[string]bool{},
 		chosen:       -1,
+		revealChosen: -1,
 		folderPick:   gridPick{pivot: -1},
 		searchPick:   gridPick{pivot: -1},
 		tag:          -1,
@@ -361,8 +370,11 @@ func (a *app) revealPath(dir string) {
 	if dir == a.root {
 		return
 	}
+	if !underRoot(a.root, dir) {
+		return
+	}
 	rel, err := filepath.Rel(a.root, dir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil {
 		return
 	}
 	cur := a.root
@@ -405,6 +417,7 @@ func (a *app) loadImages() {
 	a.thumbOrder = nil
 	a.grid = ui.GridState{}
 	a.chosen = -1
+	a.revealChosen, a.revealLaid = -1, false
 	a.folderPick = gridPick{pivot: -1}
 	a.foldersErr = nil
 	a.foldersLoading = dir != ""
@@ -432,6 +445,12 @@ func (a *app) loadImages() {
 			a.photos = photos
 			a.buildFolderItems()
 			a.chosen = -1
+			if path := a.pendingPhotoPath; path != "" {
+				a.pendingPhotoPath = ""
+				if a.choosePhotoPath(path) {
+					a.revealChosen, a.revealLaid = a.chosen, false
+				}
+			}
 			j := a.pendingTag
 			a.pendingTag = -1
 			if a.mode == viewSingle && (j >= 0 || a.singleShowsFolder(dir)) {

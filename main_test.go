@@ -873,7 +873,7 @@ func TestFoldersAndSearchKeepOwnState(t *testing.T) {
 	}
 }
 
-func TestSearchResultKeepsFoldersView(t *testing.T) {
+func TestSearchResultShowsItsFolderInTheFoldersView(t *testing.T) {
 	root := t.TempDir()
 	trips := filepath.Join(root, "Trips")
 	if err := os.Mkdir(trips, 0o755); err != nil {
@@ -933,11 +933,122 @@ func TestSearchResultKeepsFoldersView(t *testing.T) {
 		t.Errorf("the arrow past the last result shows %v", p)
 	}
 
-	// The folders view still lists the folder it showed.
+	// The folders view shows the result's folder, with the result chosen.
 	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	if a.selected != root || !tt.HasText("alpha.png") || tt.HasText("beach.png") {
-		t.Errorf("the folders view shows folder %q: %q", a.selected, tt.Texts())
+	if a.mode != viewFolders || a.selected != trips {
+		t.Errorf("the folders view shows folder %q, want %q", a.selected, trips)
+	}
+	if a.chosen < 0 || a.chosen >= len(a.items) || a.items[a.chosen].name != "sunset.png" {
+		t.Errorf("the folders view chose item %d, want sunset.png", a.chosen)
+	}
+	if !a.folderPick.selection.Has(a.items[a.chosen].path) || a.folderPick.selection.Len() != 1 {
+		t.Errorf("the folders view shows %d items chosen, want sunset.png alone",
+			a.folderPick.selection.Len())
+	}
+	if tt.HasText("alpha.png") || !tt.HasText("beach.png") {
+		t.Errorf("the folders view shows %q, want the Trips folder", tt.Texts())
+	}
+}
+
+func TestFoldersViewChoosesTheResultItsFolderShows(t *testing.T) {
+	root := t.TempDir()
+	beta := filepath.Join(root, "beta.png")
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, beta, color.RGBA{G: 255, A: 255})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"list":[{"path":%q,"score":0.6}],"total":1}`, beta)
+	}))
+	defer srv.Close()
+
+	// The result is in the folder the folders view already shows.
+	a := syncApp(root)
+	gmbdAt(a, srv.URL)
+	a.searchQuery = "beta"
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+	cell, ok := tt.Find("beta.png")
+	if !ok {
+		t.Fatalf("the result is not shown: %q", tt.Texts())
+	}
+	x, y := cell.X+cell.W/2, cell.Y+cell.H/2
+	tt.ClickAt(x, y)
+	tt.ClickAt(x, y)
+	if a.mode != viewSingle {
+		t.Fatalf("double clicking the result shows view %d, want the single image", a.mode)
+	}
+
+	// Folders shows that folder, with the result chosen in its grid.
+	if err := tt.Click("Folders"); err != nil {
+		t.Fatal(err)
+	}
+	if a.mode != viewFolders || a.selected != root {
+		t.Errorf("the folders view shows folder %q, want %q", a.selected, root)
+	}
+	if a.chosen < 0 || a.chosen >= len(a.items) || a.items[a.chosen].name != "beta.png" {
+		t.Errorf("the folders view chose item %d, want beta.png", a.chosen)
+	}
+	if !a.folderPick.selection.Has(beta) || a.folderPick.selection.Len() != 1 {
+		t.Errorf("the folders view shows %d items chosen, want beta.png alone",
+			a.folderPick.selection.Len())
+	}
+}
+
+func TestFoldersViewScrollsToTheResultItShows(t *testing.T) {
+	root := t.TempDir()
+	var far string
+	for i := range 60 {
+		path := filepath.Join(root, fmt.Sprintf("img%02d.png", i))
+		writePNG(t, path, color.RGBA{R: 255, A: 255})
+		if i == 45 {
+			far = path
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"list":[{"path":%q,"score":0.6}],"total":1}`, far)
+	}))
+	defer srv.Close()
+
+	a := syncApp(root)
+	gmbdAt(a, srv.URL)
+	a.searchQuery = "far"
+	var ctx *ui.Context
+	tt := ui.NewTester(func(c *ui.Context) { ctx = c; a.view(c) }, 1000, 640)
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+	cell, ok := tt.Find("img45.png")
+	if !ok {
+		t.Fatalf("the result is not shown: %q", tt.Texts())
+	}
+	x, y := cell.X+cell.W/2, cell.Y+cell.H/2
+	tt.ClickAt(x, y)
+	tt.ClickAt(x, y)
+	if err := tt.Click("Folders"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The image the folder shows at its end scrolled into view, rather
+	// than the folder's first images.
+	if a.chosen != 45 {
+		t.Fatalf("the folders view chose item %d, want img45.png", a.chosen)
+	}
+	grid := a.grid.Handle.Bounds(ctx)
+	chosen := a.folderPick.handles[a.chosen].Bounds(ctx)
+	if chosen.H <= 0 || chosen.Y < grid.Y || chosen.Y+chosen.H > grid.Y+grid.H+1 {
+		t.Errorf("the chosen cell %v is not in the grid's view %v", chosen, grid)
 	}
 }

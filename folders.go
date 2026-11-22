@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -75,6 +77,9 @@ func (a *app) folders(c *ui.Context) {
 			}).Grow(1).Padding(12)
 			grid.HandleInput(func(ev ui.InputEvent) bool { return a.gridInput(c, m, &a.grid.Handle, ev) })
 			grid.DrawOver(func(p *ui.Painter, r ui.Rect) { a.paintGridDrag(p, r, &a.folderPick) })
+			if a.revealChosen >= 0 {
+				a.revealChosenIntoView(c)
+			}
 			if grid.Submitted() {
 				a.activateItem(c)
 			}
@@ -272,11 +277,79 @@ func (a *app) activateItem(c *ui.Context) {
 	}
 }
 
-// showFolders returns to the tree and the selected folder's images.
+// showFolders returns to the tree and the selected folder's images. A
+// photo the single image view shows brings its folder, as a search result
+// opened elsewhere does, and is chosen among its images.
 func (a *app) showFolders() {
 	if a.mode == viewFolders {
 		return
 	}
+	// Without a tag the view came back from its last one, whose folder
+	// the folders view still shows.
+	shown := ""
+	if a.mode == viewSingle && a.tag >= 0 {
+		if p := a.singlePhoto(); p != nil {
+			shown = p.path
+		}
+	}
 	a.mode = viewFolders
 	a.clearSingle()
+	if shown != "" {
+		a.revealPhoto(shown)
+	}
+}
+
+// revealPhoto shows path's folder in the folders view and chooses the
+// image among its items, waiting for the folder to load when it is not the
+// one showing. A folder past the root has no tree row to show, so the
+// folders view keeps the folder it shows.
+func (a *app) revealPhoto(path string) {
+	dir := filepath.Dir(path)
+	if !underRoot(a.root, dir) {
+		return
+	}
+	if dir == a.selected {
+		if a.choosePhotoPath(path) {
+			a.revealChosen, a.revealLaid = a.chosen, false
+		}
+		return
+	}
+	a.pendingPhotoPath = path
+	a.selectDir(dir)
+}
+
+// choosePhotoPath chooses the folders view's item at path, when the folder
+// shows it, and reports whether it did. The item is the grid's only
+// choice, as a click makes it, so that the grid shows it chosen.
+func (a *app) choosePhotoPath(path string) bool {
+	for i, item := range a.items {
+		if item.photo != nil && item.path == path {
+			a.chosen = i
+			a.folderPick.selection.Clear()
+			a.folderPick.selection.Add(path)
+			a.folderPick.pivot = i
+			return true
+		}
+	}
+	return false
+}
+
+// revealChosenIntoView scrolls the folders view's grid to the item a photo
+// brought there: on the frame after the folder loaded, once the grid had
+// its own width to lay the items out at rather than the window's.
+func (a *app) revealChosenIntoView(c *ui.Context) {
+	if !a.revealLaid {
+		a.revealLaid = true
+		c.Invalidate()
+		return
+	}
+	a.grid.ScrollIntoView(a.revealChosen)
+	a.revealChosen, a.revealLaid = -1, false
+	c.Invalidate() // the grid scrolls as it lays out next
+}
+
+// underRoot reports whether dir is root or inside it.
+func underRoot(root, dir string) bool {
+	rel, err := filepath.Rel(root, dir)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
