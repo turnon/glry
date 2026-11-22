@@ -31,6 +31,26 @@ func gmbdAt(a *app, url string) {
 	a.setSearcher(searchWayGmbd)
 }
 
+// pageSearcher serves search pages from a list, and records the pages asked.
+type pageSearcher struct {
+	pages [][]string
+	total int
+	asked []int
+}
+
+func (s *pageSearcher) search(query, scope string, page int) ([]searchResult, int, error) {
+	s.asked = append(s.asked, page)
+	var results []searchResult
+	if page >= 1 && page <= len(s.pages) {
+		for _, path := range s.pages[page-1] {
+			results = append(results, searchResult{photo: &photo{path: path, name: filepath.Base(path)}})
+		}
+	}
+	return results, s.total, nil
+}
+
+func (s *pageSearcher) index(path string) (chan struct{}, error) { return nil, nil }
+
 func singleViewNow(t *testing.T, a *app) *tagView {
 	t.Helper()
 	view := a.currentTagView()
@@ -642,7 +662,7 @@ func TestSearchViewFindsImages(t *testing.T) {
 		}
 		pages = append(pages, got.page)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"list":[{"path":%q,"score":0.75}],"total":4}`, found)
+		fmt.Fprintf(w, `{"list":[{"path":%q,"score":0.75}],"total":1}`, found)
 	}))
 	defer srv.Close()
 
@@ -663,19 +683,135 @@ func TestSearchViewFindsImages(t *testing.T) {
 	if len(a.searchResults) != 1 || a.searchResults[0].photo.path != found {
 		t.Fatalf("the search found %v, want %q", a.searchResults, found)
 	}
-	if !tt.HasText("0.750") || !tt.HasText("1/4 pages") {
-		t.Errorf("the view does not show the result and its page: %q", tt.Texts())
+	if !tt.HasText("0.750") || !tt.HasText("1 / 1") {
+		t.Errorf("the view does not show the result and its count: %q", tt.Texts())
+	}
+	if tt.HasText("Next page") || tt.HasText("Previous page") {
+		t.Errorf("the view still shows a paginator: %q", tt.Texts())
+	}
+	if !slices.Equal(pages, []string{"1"}) {
+		t.Errorf("the search asked for pages %v, want one", pages)
+	}
+}
+
+func TestSearchViewLoadsMoreAtTheEnd(t *testing.T) {
+	root := t.TempDir()
+	const total = 2*searchPageSize + 5
+	for i := 0; i < total; i++ {
+		writePNG(t, filepath.Join(root, fmt.Sprintf("img%02d.png", i)), color.RGBA{A: 255})
+	}
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		asked = append(asked, page)
+		count := searchPageSize
+		switch page {
+		case "3":
+			count = total - 2*searchPageSize
+		default:
+			if page != "1" && page != "2" {
+				count = 0
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"list":[`)
+		for i := 0; i < count; i++ {
+			if i > 0 {
+				fmt.Fprint(w, ",")
+			}
+			n := 0
+			if page == "1" {
+				n = i
+			} else if page == "2" {
+				n = searchPageSize + i
+			} else {
+				n = 2*searchPageSize + i
+			}
+			path := filepath.Join(root, fmt.Sprintf("img%02d.png", n))
+			fmt.Fprintf(w, `{"path":%q,"score":0.5}`, path)
+		}
+		fmt.Fprintf(w, `],"total":%d}`, total)
+	}))
+	defer srv.Close()
+
+	a := syncApp(root)
+	gmbdAt(a, srv.URL)
+	a.searchQuery, a.searchScope = "pictures", root
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.Click("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.searchResults) != searchPageSize {
+		t.Fatalf("the first page holds %d results, want %d", len(a.searchResults), searchPageSize)
+	}
+	if !tt.HasText(fmt.Sprintf("%d / %d", searchPageSize, total)) {
+		t.Errorf("the view does not show the count: %q", tt.Texts())
+	}
+	if !slices.Equal(asked, []string{"1"}) {
+		t.Fatalf("the view asked for pages %v before a scroll, want one", asked)
 	}
 
-	// The arrows step through the service's pages.
-	if err := tt.Click("Next page"); err != nil {
-		t.Fatal(err)
+	// Scrolling near the end asks for the page after it.
+	tt.Move(500, 400)
+	tt.Scroll(500, 400, 0, 10000)
+	for range 10 {
+		tt.Frame()
+		if len(a.searchResults) > searchPageSize {
+			break
+		}
 	}
-	if err := tt.Click("Previous page"); err != nil {
-		t.Fatal(err)
+	if len(a.searchResults) != 2*searchPageSize {
+		t.Fatalf("the end loaded %d results, want %d", len(a.searchResults), 2*searchPageSize)
 	}
-	if a.searchPage != 1 || !slices.Equal(pages, []string{"1", "2", "1"}) {
-		t.Errorf("the arrows asked for pages %v and left page %d, want 1, 2, 1", pages, a.searchPage)
+
+	// The new end loads the rest.
+	a.searchScroll.Y = a.searchScroll.MaxY - a.cellHeight/2
+	for range 10 {
+		tt.Frame()
+		if len(a.searchResults) == total {
+			break
+		}
+	}
+	if len(a.searchResults) != total || !slices.Equal(asked, []string{"1", "2", "3"}) {
+		t.Fatalf("the search loaded %d results from pages %v, want %d from 1, 2, 3",
+			len(a.searchResults), asked, total)
+	}
+	if !tt.HasText(fmt.Sprintf("%d / %d", total, total)) {
+		t.Errorf("the view does not show the count loaded: %q", tt.Texts())
+	}
+}
+
+func TestSearchViewFillsAViewportWithoutScroll(t *testing.T) {
+	root := t.TempDir()
+	const total = searchPageSize + 10
+	var pages [][]string
+	for i := 0; i < total; i++ {
+		path := filepath.Join(root, fmt.Sprintf("img%02d.png", i))
+		writePNG(t, path, color.RGBA{A: 255})
+		if i%searchPageSize == 0 {
+			pages = append(pages, nil)
+		}
+		pages[len(pages)-1] = append(pages[len(pages)-1], path)
+	}
+	searcher := &pageSearcher{pages: pages, total: total}
+	a := syncApp(root)
+	a.searcher = searcher
+	a.searchQuery = "pictures"
+	a.mode = viewSearch
+	a.runSearch()
+	tt := ui.NewTester(a.view, 2000, 2000)
+	for range 10 {
+		tt.Frame()
+		if len(a.searchResults) == total {
+			break
+		}
+	}
+	if len(a.searchResults) != total || !slices.Equal(searcher.asked, []int{1, 2}) {
+		t.Fatalf("the view loaded %d results from pages %v, want %d from 1, 2",
+			len(a.searchResults), searcher.asked, total)
 	}
 }
 

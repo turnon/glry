@@ -167,13 +167,13 @@ type app struct {
 	// searcher is the backend the search view asks: gmbd's HTTP service or
 	// the SQLite vector database. gmbdURL is that service's address, and
 	// sqlitePath the database, with embedURL/embedModel the service that
-	// embeds a query for the sqlite way. searchQuery, searchScope and
-	// searchPage are its inputs, and searchPageSize the largest page of
-	// results seen, which the page count uses. searchResults is what the
-	// search found, with searchTotal how many it counted in all, and
-	// searchGen tells the answer of a search run meanwhile to drop.
-	// searchGrid and searchChosen are the results' grid, as grid and chosen
-	// are the folders view's.
+	// embeds a query for the sqlite way. searchQuery and searchScope are its
+	// inputs, and searchPage the page it asks next. searchResults is what the
+	// search has found so far, with searchTotal how many it counted in all,
+	// and searchGen tells the answer of a search run meanwhile to drop.
+	// searchingMore and searchedNoMore tell that another page is on its
+	// way and that the backend has no more. searchScroll keeps the results'
+	// place, and searchGrid and searchChosen are the grid and its choice.
 	searcher       searcher
 	gmbdURL        string
 	sqlitePath     string
@@ -182,12 +182,16 @@ type app struct {
 	searchQuery    string
 	searchScope    string
 	searchPage     int
-	searchPageSize int
 	searchResults  []searchResult
 	searchTotal    int
 	searchErr      string
 	searchLoading  bool
+	searchingMore  bool
+	searchedNoMore bool
 	searchGen      uint64
+	searchScroll   ui.ScrollState
+	searchAtY      float32 // the scroll offset loading more last considered
+	searchLaid     int     // len(searchResults) the grid last laid out, -1 before
 	searchGrid     ui.GridState
 	searchChosen   int
 
@@ -240,6 +244,7 @@ func newApp(root string) *app {
 		embedURL:     d.embedURL,
 		embedModel:   d.embedModel,
 		searchPage:   1,
+		searchLaid:   -1,
 		searchChosen: -1,
 		sidebarWidth: 250,
 		thumbSlots:   make(chan struct{}, 4),

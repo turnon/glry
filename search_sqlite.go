@@ -81,8 +81,8 @@ func (s sqlite) search(query, scope string, page int) ([]searchResult, int, erro
 	}
 	defer db.Close()
 
-	// total is how many images the scope holds, which the view's pages
-	// count. A KNN query filters vec0 metadata with = or in only, so the
+	// total is how many images the scope holds, which the view's count
+	// shows. A KNN query filters vec0 metadata with = or in only, so the
 	// scope's expression is matched here, over the dirs of the whole table,
 	// in the same pass that counts their images.
 	match, err := s.scopeMatch(scope)

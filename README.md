@@ -8,7 +8,7 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `folders.go` — the folders view: the sidebar's outline rows and the selected folder's grid of folder and photo cells, with their selection and the image count tag.
 - `select.go` — choosing several items in the folders and search grids: Cmd-click, Shift-click, and dragging a rectangle over them.
 - `single.go` — the single-image view: opening photos, zoom, pan, and the history tags with their kept views.
-- `search.go` — the search view: query/scope/page header, the results grid, and opening its chosen images.
+- `search.go` — the search view: query/scope header, the results grid that loads more as it nears its end, and opening its chosen images.
 - `search_gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`.
 - `search_sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, and indexing folders or images into it.
 - `embedding.go` — the embedding service: query text and base64 images in, vectors out.

@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
 )
 
-// searchPageSize is how many images a search page holds.
+// searchPageSize is how many images a search page holds; the grid asks
+// for the next page as it nears the end of the results it has.
 const searchPageSize = 20
 
 // searchResult is one image the search service found, with its score.
@@ -26,7 +28,7 @@ func (a *app) showSearch() {
 }
 
 // searchView searches the folder tree's images and shows the results as a
-// grid.
+// grid that loads more as it nears its end.
 func (a *app) searchView(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
@@ -38,15 +40,22 @@ func (a *app) searchView(c *ui.Context) {
 			a.indexStatus(c)
 		}
 	})
+	if a.searchResults != nil && !a.searchLoading && a.searchErr == "" {
+		ui.Overlay(c, func() {
+			ui.Badge(c, fmt.Sprintf("%d / %d", len(a.searchResults), a.searchTotal)).
+				Absolute().Bottom(0).Right(0).
+				Padding(3, 8).Radius(8, 0, 0, 0).
+				Background(t.Surface).TextColor(t.TextMuted).
+				Tooltip("Images shown and found")
+		})
+	}
 }
 
-// searchHeader holds the search view's query, scope, the button that runs
-// the search, and the arrows that step through its pages. Enter in either
-// input submits it too.
+// searchHeader holds the search view's query, scope and the button that runs
+// the search. Enter in either input submits it too.
 func (a *app) searchHeader(c *ui.Context) {
 	submit := func() {
 		a.searchPage = 1
-		a.searchPageSize = 0
 		a.runSearch()
 	}
 	ui.Row(c).FillWidth().Padding(14, 24).Gap(10).AlignItems(ui.Center).Wrap().Children(func() {
@@ -55,20 +64,6 @@ func (a *app) searchHeader(c *ui.Context) {
 			OnSubmit(submit)
 		a.scopeField(c, submit)
 		ui.PrimaryButton(c, "Submit").Tooltip("Run the search").OnClick(submit)
-		ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
-			a.pageButton(c, "Previous page", "Previous page", chevronLeftIcon, a.searchPage <= 1, func() {
-				if a.searchPage > 1 {
-					a.searchPage--
-					a.runSearch()
-				}
-			})
-			a.pageButton(c, "Next page", "Next page", chevronRightIcon, !a.searchHasMore(), func() {
-				a.searchPage++
-				a.runSearch()
-			})
-			ui.Text(c, fmt.Sprintf("%d/%d pages", a.searchPage, a.searchPages())).
-				FontSize(12).TextColor(c.Theme().TextMuted).PaddingStart(4)
-		})
 	})
 }
 
@@ -101,47 +96,9 @@ func (a *app) scopeField(c *ui.Context, submit func()) {
 	})
 }
 
-// pageButton is one arrow of the search header's pagination, disabled when
-// there is no page that way.
-func (a *app) pageButton(c *ui.Context, label, tooltip string, icon *ui.SVG, disabled bool, onClick func()) {
-	t := c.Theme()
-	btn := ui.ButtonBase(c).Label(label).Tooltip(tooltip).Size(32, 32).
-		Radius(t.Radius).Disabled(disabled).OnClick(onClick)
-	btn.Children(func() {
-		ui.Icon(c, icon).Size(16, 16)
-	})
-	if disabled {
-		btn.TextColor(t.TextMuted)
-		return
-	}
-	switch {
-	case btn.Pressed():
-		btn.Background(t.SurfacePressed)
-	case btn.Hovered():
-		btn.Background(t.SurfaceHover)
-	}
-}
-
-// searchHasMore reports whether the total reaches past the page shown, the
-// results it holds giving the page's size.
-func (a *app) searchHasMore() bool {
-	n := len(a.searchResults)
-	return n > 0 && a.searchPage*n < a.searchTotal
-}
-
-// searchPages is how many pages the total takes, the largest page of
-// results seen giving a page's size.
-func (a *app) searchPages() int {
-	size := a.searchPageSize
-	if size <= 0 || a.searchTotal <= 0 {
-		return max(a.searchPage, 1)
-	}
-	return max((a.searchTotal+size-1)/size, 1)
-}
-
 // searchResultsView shows what the search found: a message for a search on its
 // way, one that failed or one that found nothing, and otherwise the images
-// as the folders view does.
+// as the folders view does, asking for more as the grid nears its end.
 func (a *app) searchResultsView(c *ui.Context) {
 	t := c.Theme()
 	switch {
@@ -181,13 +138,40 @@ func (a *app) searchResultsView(c *ui.Context) {
 		}
 		grid := ui.GridView(c, &a.searchGrid, len(a.searchResults), a.cellWidth, a.cellHeight, func(i int) {
 			a.searchCell(c, gen, m, i)
-		}).Grow(1).Padding(12)
+		}).Grow(1).Padding(12).TrackScroll(&a.searchScroll)
 		grid.HandleInput(func(ev ui.InputEvent) bool { return a.gridInput(c, m, &a.searchGrid.Handle, ev) })
 		grid.DrawOver(func(p *ui.Painter, r ui.Rect) { a.paintGridDrag(p, r, &a.searchPick) })
 		if grid.Submitted() && a.searchChosen >= 0 && a.searchChosen < len(a.searchResults) {
 			a.openSearchPhotos(c, a.searchResults[a.searchChosen].photo.path)
 		}
 	})
+	a.loadMoreSearchNearEnd(c)
+}
+
+// loadMoreSearchNearEnd asks for the next page once the user scrolls the
+// grid near its end, or once the page shown does not fill the grid at all,
+// so that the results flow on as they go down. It waits for a page it adds
+// to be laid out before considering the place again.
+func (a *app) loadMoreSearchNearEnd(c *ui.Context) {
+	n := len(a.searchResults)
+	if a.searchLaid != n {
+		a.searchLaid = n
+		c.Invalidate()
+		return
+	}
+	y := a.searchScroll.Y
+	scrolled := y != a.searchAtY
+	a.searchAtY = y
+	if n >= a.searchTotal || a.searchedNoMore {
+		return
+	}
+	if a.searchScroll.MaxY > 0 {
+		// The grid scrolls: load only as the user nears its end.
+		if !scrolled || y < a.searchScroll.MaxY-a.cellHeight {
+			return
+		}
+	}
+	a.loadMoreSearch()
 }
 
 // searchGridModel is the search results' grid as choosing items needs it.
@@ -362,17 +346,23 @@ func (a *app) setSearcher(way searchWay) {
 }
 
 // runSearch asks the chosen backend for the images matching the query
-// within the scope, on a goroutine, replacing the results shown when it
-// answers.
+// within the scope, from the page a.searchPage gives, on a goroutine,
+// replacing the results shown when it answers.
 func (a *app) runSearch() {
 	query := strings.TrimSpace(a.searchQuery)
 	if query == "" {
 		a.searchGen++ // an answer on its way no longer matters
 		a.searchLoading = false
+		a.searchingMore = false
+		a.searchedNoMore = false
 		a.searchErr = "Type what to look for first."
 		a.searchResults = nil
 		a.searchTotal = 0
+		a.searchPage = 0
 		a.searchChosen = -1
+		a.searchScroll = ui.ScrollState{}
+		a.searchAtY = 0
+		a.searchLaid = -1
 		a.searchGrid = ui.GridState{}
 		a.searchPick = gridPick{pivot: -1}
 		return
@@ -383,9 +373,15 @@ func (a *app) runSearch() {
 	gen := a.searchGen
 	a.searchErr = ""
 	a.searchLoading = true
+	a.searchingMore = false
+	a.searchedNoMore = false
 	a.searchResults = nil
 	a.searchTotal = 0
+	a.searchPage = page
 	a.searchChosen = -1
+	a.searchScroll = ui.ScrollState{}
+	a.searchAtY = 0
+	a.searchLaid = -1
 	a.searchGrid = ui.GridState{}
 	a.searchPick = gridPick{pivot: -1}
 	a.async(func() {
@@ -401,10 +397,50 @@ func (a *app) runSearch() {
 			}
 			a.searchResults = results
 			a.searchTotal = total
+			a.searchedNoMore = len(results) == 0 || len(results) >= total
 			a.searchPick.handles = make([]ui.Handle, len(results))
 			a.searchPick.built = a.searchPick.built[:0]
-			if len(results) > a.searchPageSize {
-				a.searchPageSize = len(results)
+		})
+	})
+}
+
+// loadMoreSearch asks for the page after the results shown and adds it when
+// it answers, so that the grid holds everything the search found.
+func (a *app) loadMoreSearch() {
+	query := strings.TrimSpace(a.searchQuery)
+	if query == "" || a.searchLoading || a.searchingMore || a.searchedNoMore {
+		return
+	}
+	if len(a.searchResults) >= a.searchTotal {
+		a.searchedNoMore = true
+		return
+	}
+	scope := strings.TrimSpace(a.searchScope)
+	page := a.searchPage + 1
+	gen := a.searchGen
+	a.searchingMore = true
+	a.async(func() {
+		results, total, err := a.searcher.search(query, scope, page)
+		log.Printf("loading page: %v", page)
+		a.post(func() {
+			if gen != a.searchGen {
+				return // another search ran meanwhile
+			}
+			a.searchingMore = false
+			if err != nil {
+				log.Printf("loading more search results: %v", err)
+				a.searchedNoMore = true
+				return
+			}
+			a.searchPage = page
+			if total > 0 {
+				a.searchTotal = total
+			}
+			before := len(a.searchResults)
+			a.searchResults = append(a.searchResults, results...)
+			a.searchPick.handles = append(a.searchPick.handles, make([]ui.Handle, len(results))...)
+			if len(results) == 0 || len(a.searchResults) == before || len(a.searchResults) >= a.searchTotal {
+				a.searchedNoMore = true
 			}
 		})
 	})

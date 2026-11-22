@@ -246,7 +246,6 @@ func searchGridItems(t *testing.T, names ...string) (*app, *ui.Tester) {
 	a.mode = viewSearch
 	a.searchResults = results
 	a.searchTotal = len(results)
-	a.searchPageSize = len(results)
 	a.searchPick = gridPick{pivot: -1, handles: make([]ui.Handle, len(results))}
 	tt := ui.NewTester(a.view, 1000, 640)
 	tt.Frame()
