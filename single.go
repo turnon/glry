@@ -358,15 +358,17 @@ func (a *app) historyTags(c *ui.Context) {
 					row := ui.Row(c).AlignItems(ui.Stretch).Gap(0).Width(tagWidth).Shrink(0).
 						BorderWidth(0, right, 0, left).BorderColor(t.Border)
 					hover := !on && row.Hovered()
+					menu := func(m *ui.Menu) { a.tagMenuItem(m, j) }
+					row.ContextMenu(menu)
 					row.Children(func() {
 						face(ui.Button(c, name).FontSize(12).Grow(1).MinWidth(0).
 							Padding(6, 10).Radius(0).Tooltip(name), on, hover).
-							OnClick(func() { a.selectTag(j) })
+							ContextMenu(menu).OnClick(func() { a.selectTag(j) })
 						// The close icon has no tooltip: under the pointer it turns red,
 						// which says what it does without a hint over the header.
 						close := face(ui.Button(c, "").Label("Close "+name).
 							Padding(6, 8).Radius(0).Shrink(0), on, hover).
-							OnClick(func() { a.closeTag(j) })
+							ContextMenu(menu).OnClick(func() { a.closeTag(j) })
 						if close.Hovered() {
 							close.TextColor(t.Danger)
 						}
@@ -377,6 +379,45 @@ func (a *app) historyTags(c *ui.Context) {
 				}
 			})
 		})
+}
+
+// tagMenuItem adds the items of a tag's context menu, which close the
+// tag, the others beside it, or the ones to its right. The last two are
+// disabled when they would leave nothing to close.
+func (a *app) tagMenuItem(m *ui.Menu, j int) {
+	if m.Item("Close").Chosen() {
+		a.closeTag(j)
+	}
+	if m.Item("Close others").Disabled(len(a.history) <= 1).Chosen() {
+		a.closeOtherTags(j)
+	}
+	if m.Item("Close to the Right").Disabled(j >= len(a.history)-1).Chosen() {
+		a.closeTagsRight(j)
+	}
+}
+
+// closeOtherTags drops every tag but j, with their views. The tag j
+// shows its photo, as the tag the menu chose it from does.
+func (a *app) closeOtherTags(j int) {
+	if j < 0 || j >= len(a.history) {
+		return
+	}
+	for i := len(a.history) - 1; i >= 0; i-- {
+		if i != j {
+			a.closeTag(i)
+		}
+	}
+}
+
+// closeTagsRight drops the tags after j, with their views, showing tag
+// j when the tag showing was one of them.
+func (a *app) closeTagsRight(j int) {
+	if j < 0 || j >= len(a.history) {
+		return
+	}
+	for i := len(a.history) - 1; i > j; i-- {
+		a.closeTag(i)
+	}
 }
 
 // revealTag scrolls the header's tags sideways so that the tag showing

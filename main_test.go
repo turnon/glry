@@ -505,6 +505,81 @@ func TestClosingTags(t *testing.T) {
 	}
 }
 
+func TestTagContextMenuClosesTags(t *testing.T) {
+	root := t.TempDir()
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
+	writePNG(t, filepath.Join(root, "gamma.png"), color.RGBA{B: 255, A: 255})
+	a := syncApp(root)
+	tt := ui.NewTester(a.view, 1000, 640)
+
+	// Open the three photos, each with its own tag; the last one shows.
+	for i := range a.photos {
+		a.showPhotoAt(i)
+	}
+	tt.Frame()
+	if len(a.history) != 3 || a.tag != 2 {
+		t.Fatalf("the history is %v with tag %d, want all three photos", a.history, a.tag)
+	}
+
+	// A tag's menu closes it, the ones beside it, or those to its right.
+	if err := tt.RightClick("beta.png"); err != nil {
+		t.Fatal(err)
+	}
+	menu := tt.Menu()
+	if want := []string{"Close", "Close others", "Close to the Right"}; !slices.Equal(menu, want) {
+		t.Fatalf("the tag's menu is %q, want %q", menu, want)
+	}
+	if err := tt.ChooseMenuItem("Close to the Right"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 2 || filepath.Base(a.history[0]) != "alpha.png" || filepath.Base(a.history[1]) != "beta.png" {
+		t.Errorf("Close to the Right leaves %v, want alpha.png and beta.png", a.history)
+	}
+	if a.tag != 1 || a.singlePhoto() == nil || a.singlePhoto().name != "beta.png" {
+		t.Errorf("Close to the Right shows tag %d with %v, want beta.png", a.tag, a.singlePhoto())
+	}
+	if len(a.tagViews) != 2 {
+		t.Errorf("%d tag views for %d tags", len(a.tagViews), len(a.history))
+	}
+
+	// Close others keeps the tag the menu opened on.
+	a.showPhotoAt(2)
+	tt.Frame()
+	if err := tt.RightClick("alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("Close others"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 1 || filepath.Base(a.history[0]) != "alpha.png" {
+		t.Errorf("Close others leaves %v, want alpha.png alone", a.history)
+	}
+	if a.tag != 0 || a.singlePhoto() == nil || a.singlePhoto().name != "alpha.png" {
+		t.Errorf("Close others shows tag %d with %v, want alpha.png", a.tag, a.singlePhoto())
+	}
+	if len(a.tagViews) != 1 || a.mode != viewSingle {
+		t.Errorf("Close others leaves %d tag views in view %d", len(a.tagViews), a.mode)
+	}
+
+	// With one tag left, the menu items that would close nothing are disabled.
+	if err := tt.RightClick("alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("Close others"); err == nil {
+		t.Error("Close others is enabled with one tag")
+	}
+	if err := tt.ChooseMenuItem("Close to the Right"); err == nil {
+		t.Error("Close to the Right is enabled on the last tag")
+	}
+	if err := tt.ChooseMenuItem("Close"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.history) != 0 || a.tag != -1 || a.mode != viewFolders {
+		t.Errorf("Close leaves %v with tag %d in view %d, want the folders view", a.history, a.tag, a.mode)
+	}
+}
+
 func TestSingleImageZoomsAndPans(t *testing.T) {
 	root := t.TempDir()
 	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
