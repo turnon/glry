@@ -174,6 +174,62 @@ func TestTreeLoadsChildrenWhenOpened(t *testing.T) {
 	}
 }
 
+// treeBand returns the pixels of the tree rows at r, clear of the tree's
+// scroll bars, which the app's sidebar draws beside them.
+func treeBand(a *app, tt *ui.Tester, r ui.Rect) []byte {
+	img := tt.Image()
+	x0, x1 := railWidth+8, railWidth+int(a.sidebarWidth)-16
+	y0, y1 := int(r.Y), int(r.Y+r.H)
+	var out []byte
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			out = append(out, byte(r>>8), byte(g>>8), byte(b>>8))
+		}
+	}
+	return out
+}
+
+func TestTreeScrollsSidewaysForLongNames(t *testing.T) {
+	tree := func(t *testing.T, name string) (*app, *ui.Tester) {
+		t.Helper()
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		a := syncApp(root)
+		return a, ui.NewTester(a.view, 900, 600)
+	}
+
+	// A name wider than the sidebar scrolls sideways, the pointer over its
+	// row: the strip of rows shows other pixels, a little to the left.
+	long := "A folder whose name is far too long to fit in the sidebar"
+	a, tt := tree(t, long)
+	row, ok := tt.Find(long)
+	if !ok {
+		t.Fatalf("the long folder's row is not shown: %q", tt.Texts())
+	}
+	tt.Move(row.X+10, row.Y+row.H/2)
+	before := treeBand(a, tt, row)
+	tt.Scroll(row.X+10, row.Y+row.H/2, 80, 0)
+	if after := treeBand(a, tt, row); bytes.Equal(before, after) {
+		t.Error("the tree did not scroll sideways for a name wider than it")
+	}
+
+	// A name that fits stays where it is: there is nothing to scroll.
+	a, tt = tree(t, "Trips")
+	row, ok = tt.Find("Trips")
+	if !ok {
+		t.Fatalf("the folder's row is not shown: %q", tt.Texts())
+	}
+	tt.Move(row.X+10, row.Y+row.H/2)
+	before = treeBand(a, tt, row)
+	tt.Scroll(row.X+10, row.Y+row.H/2, 80, 0)
+	if after := treeBand(a, tt, row); !bytes.Equal(before, after) {
+		t.Error("the tree scrolled sideways for a name that fits")
+	}
+}
+
 func TestScanSkipsHiddenAndNonImages(t *testing.T) {
 	root := t.TempDir()
 	writePNG(t, filepath.Join(root, "photo.png"), color.RGBA{A: 255})
@@ -222,8 +278,8 @@ func TestRailSwitchesViews(t *testing.T) {
 	if a.mode != viewSingle || !tt.HasText("alpha.png") {
 		t.Fatalf("clicking the eye shows view %d with %q, want the first image", a.mode, tt.Texts())
 	}
-	if _, ok := tt.Find("Open"); ok {
-		t.Error("the tree and its buttons still show in the single image view")
+	if _, ok := tt.Find(rootName(root)); ok {
+		t.Error("the tree still shows in the single image view")
 	}
 	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)

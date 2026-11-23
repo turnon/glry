@@ -329,12 +329,14 @@ func (a *app) historyTags(c *ui.Context) {
 	// The tag showing comes into view as it changes, as one opened past
 	// the right edge does, but scrolling the tags leaves it where it is.
 	a.revealTag(c)
-	// The bar is thin and low enough to run along the foot of the tags,
-	// within the room their padding leaves, rather than over their names.
+	// The bar is thin and sticks to the header's bottom, under the tags
+	// rather than over their names: the thumb takes the whole height of
+	// its track, so that the track holds it at the bottom instead of
+	// floating it in the middle of a wider one.
 	ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Bind(&a.tagsRef).
 		TrackScroll(&a.tagScroll).ScrollbarAxes(true, false).
-		KeepScrollbars(true).ScrollbarInsets(0, 0, 1, 0).
-		ScrollbarStyle(ui.ScrollbarStyle{TrackWidth: 8, ThumbWidth: 4, MinLength: 24}).
+		KeepScrollbars(true).
+		ScrollbarStyle(ui.ScrollbarStyle{TrackWidth: 4, ThumbWidth: 4, MinLength: 24}).
 		Children(func() {
 			ui.Row(c).AlignItems(ui.Stretch).Children(func() {
 				for j, path := range a.history {

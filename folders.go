@@ -11,18 +11,17 @@ import (
 func (a *app) sidebar(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Background(t.Surface).Children(func() {
-		ui.Row(c).Gap(8).Padding(10, 12).Justify(ui.Center).Children(func() {
-			ui.Button(c, "").Label("Open").Tooltip("Open a folder").BorderWidth(0).OnClick(a.chooseFolder).Children(func() {
-				ui.Icon(c, openIcon).Size(16, 16)
-			})
-			ui.Button(c, "").Label("Refresh").Tooltip("Refresh the folder").BorderWidth(0).OnClick(a.reload).Children(func() {
-				ui.Icon(c, refreshIcon).Size(16, 16)
-			})
-		})
-		ui.Divider(c)
+		// The rows' width follows their labels, which the previous frame
+		// laid out: apply the width measured from them, and ask for the
+		// frame that measures the rows this one builds.
+		width := a.treeRowWidth(c)
+		if width != a.treeRowW {
+			a.treeRowW = width
+			c.Invalidate()
+		}
 		outline := ui.Outline(c, &a.tree, []string{a.root}, a.children, func(dir string) {
 			a.treeRow(c, dir)
-		}).Grow(1).Padding(6)
+		}).Grow(1).Padding(6).RowWidth(width)
 		if outline.Changed() && a.dirRow >= 0 && a.dirRow < a.tree.Rows() {
 			a.selectDir(a.tree.Item(a.dirRow))
 			c.Invalidate()
@@ -35,14 +34,57 @@ func (a *app) treeRow(c *ui.Context, dir string) {
 	t := c.Theme()
 	icon := t.TextMuted
 	if dir == a.selected {
-		icon = t.Accent
+		// The chosen row draws on the accent, where only its text shows.
+		icon = t.AccentText
 	}
 	row := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center)
 	row.Children(func() {
-		ui.Icon(c, folderIcon).Size(14, 14).TextColor(icon)
+		ui.Icon(c, folderIcon).Size(treeIconSize, treeIconSize).TextColor(icon)
 		ui.Text(c, rootName(dir)).SingleLine().ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir) })
 	})
 	row.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir) })
+}
+
+// treeIconSize is the size of a tree row's folder icon, and treeIconGap
+// the room after it.
+const (
+	treeIconSize float32 = 14
+	treeIconGap  float32 = 6
+)
+
+// treeRowWidth is the least width of the tree's rows that shows every
+// label whole: the outline scrolls sideways only when one does not fit
+// the sidebar. The room around a label is that of a row: its padding,
+// its indentation and arrow, and the folder icon.
+func (a *app) treeRowWidth(c *ui.Context) float32 {
+	t := c.Theme()
+	// The outline's indent, Space(4) while OutlineState.Indent is zero.
+	indent := t.Space(4)
+	pad, gap := t.Space(2), t.Space(1)
+	arrow := t.Space(4)
+	widest := float32(0)
+	for i := 0; i < a.tree.Rows(); i++ {
+		depth := float32(a.tree.Depth(i))
+		w := 2*pad + arrow + treeIconSize + treeIconGap + gap
+		if depth > 0 {
+			// Indented rows give the indent and the arrow their gap too.
+			w += depth*indent + gap
+		}
+		w += a.treeLabelWidth(c, rootName(a.tree.Item(i)))
+		widest = max(widest, w)
+	}
+	// A little more than measured, so that rounding never trims a label.
+	return widest + 1
+}
+
+// treeLabelWidth is how wide name draws in a tree row, measured once.
+func (a *app) treeLabelWidth(c *ui.Context, name string) float32 {
+	if w, ok := a.nameWidths[name]; ok {
+		return w
+	}
+	w, _ := c.MeasureText(0, ui.Span{Text: name})
+	a.nameWidths[name] = w
+	return w
 }
 
 func (a *app) folders(c *ui.Context) {
