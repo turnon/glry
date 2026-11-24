@@ -60,6 +60,19 @@ func singleViewNow(t *testing.T, a *app) *tagView {
 	return view
 }
 
+// openCell double-clicks the folders view's cell showing name, which opens
+// the image in the single image view as the user does.
+func openCell(t *testing.T, tt *ui.Tester, name string) {
+	t.Helper()
+	cell, ok := tt.Find(name)
+	if !ok {
+		t.Fatalf("%q is not shown: %q", name, tt.Texts())
+	}
+	x, y := cell.X+cell.W/2, cell.Y+cell.H/2
+	tt.ClickAt(x, y)
+	tt.ClickAt(x, y)
+}
+
 // sidebarHas reports whether s shows in the left sidebar, not the folders
 // view.
 func sidebarHas(a *app, tt *ui.Tester, s string) bool {
@@ -138,7 +151,7 @@ func TestViewShowsFolderImages(t *testing.T) {
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
 	}
-	if !tt.HasText("No images in this folder") {
+	if !tt.HasText("No image opened") {
 		t.Errorf("an empty folder has no single image state: %q", tt.Texts())
 	}
 }
@@ -275,8 +288,8 @@ func TestRailSwitchesViews(t *testing.T) {
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
 	}
-	if a.mode != viewSingle || !tt.HasText("alpha.png") {
-		t.Fatalf("clicking the eye shows view %d with %q, want the first image", a.mode, tt.Texts())
+	if a.mode != viewSingle || !tt.HasText("No image opened") {
+		t.Fatalf("clicking the eye shows view %d with %q, want the single view and how to open an image", a.mode, tt.Texts())
 	}
 	if _, ok := tt.Find(rootName(root)); ok {
 		t.Error("the tree still shows in the single image view")
@@ -311,17 +324,22 @@ func TestSingleViewOpensPhoto(t *testing.T) {
 		t.Errorf("the history is %v, want beta.png alone", a.history)
 	}
 
-	// The eye opens the photo the folders view chose.
+	// Choosing another photo in the folders view does not open it: the
+	// eye shows the tag the single view was on.
 	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	a.chosen = slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "alpha.png" })
-	tt.Frame()
+	if err := tt.Click("alpha.png"); err != nil {
+		t.Fatal(err)
+	}
+	if a.mode != viewFolders {
+		t.Fatalf("choosing alpha.png shows view %d, want the folders view", a.mode)
+	}
 	if err := tt.Click("Single image"); err != nil {
 		t.Fatal(err)
 	}
-	if a.single != 0 || !tt.HasText("alpha.png") {
-		t.Errorf("the eye shows image %d: %q, want alpha.png", a.single, tt.Texts())
+	if a.single != 1 || !tt.HasText("beta.png") {
+		t.Errorf("the eye shows image %d: %q, want the tag's beta.png", a.single, tt.Texts())
 	}
 }
 
@@ -337,12 +355,7 @@ func TestTagsSurviveOpeningAnotherFolder(t *testing.T) {
 	tt := ui.NewTester(a.view, 1000, 640)
 
 	// Open alpha.png: it becomes the only tag.
-	alpha := slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "alpha.png" })
-	a.chosen = alpha
-	tt.Frame()
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "alpha.png")
 	if len(a.history) != 1 || a.history[0] != a.photos[0].path {
 		t.Fatalf("the history is %v, want alpha.png alone", a.history)
 	}
@@ -355,12 +368,7 @@ func TestTagsSurviveOpeningAnotherFolder(t *testing.T) {
 	if err := tt.Click("Trips"); err != nil {
 		t.Fatal(err)
 	}
-	beach := slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "beach.png" })
-	a.chosen = beach
-	tt.Frame()
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "beach.png")
 	if len(a.history) != 2 {
 		t.Fatalf("opening an image in another folder cleared the tags: %v", a.history)
 	}
@@ -398,18 +406,11 @@ func TestArrowsRenameCurrentTagOnly(t *testing.T) {
 	tt := ui.NewTester(a.view, 1000, 640)
 
 	// Show alpha, then beta from the folders view: each opens a tag.
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "alpha.png")
 	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	beta := slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "beta.png" })
-	a.chosen = beta
-	tt.Frame()
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "beta.png")
 	if len(a.history) != 2 || a.tag != 1 {
 		t.Fatalf("the history is %v, tag %d, want both photos tagged at the second", a.history, a.tag)
 	}
@@ -449,17 +450,11 @@ func TestClosingTags(t *testing.T) {
 	tt := ui.NewTester(a.view, 1000, 640)
 
 	// Show alpha, then beta from the folders view: each opens a tag.
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "alpha.png")
 	if err := tt.Click("Folders"); err != nil {
 		t.Fatal(err)
 	}
-	a.chosen = slices.IndexFunc(a.items, func(it folderItem) bool { return it.name == "beta.png" })
-	tt.Frame()
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "beta.png")
 	if len(a.history) != 2 || a.tag != 1 {
 		t.Fatalf("the history is %v, tag %d, want both photos tagged at the second", a.history, a.tag)
 	}
@@ -586,9 +581,7 @@ func TestSingleImageZoomsAndPans(t *testing.T) {
 	a := syncApp(root)
 	var ctx *ui.Context
 	tt := ui.NewTester(func(c *ui.Context) { ctx = c; a.view(c) }, 1000, 640)
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "alpha.png")
 	tt.Frame()
 	room := a.singleRef.Bounds(ctx)
 	if room.W <= 0 || room.H <= 0 {
@@ -691,9 +684,7 @@ func TestSingleImageZoomResetsOnArrows(t *testing.T) {
 	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
 	a := syncApp(root)
 	tt := ui.NewTester(a.view, 1000, 640)
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "alpha.png")
 	tt.Wheel(700, 400, 0, -1)
 	view := singleViewNow(t, a)
 	if view.zoom == minSingleZoom {
@@ -715,9 +706,7 @@ func TestSingleImageKeepsZoomPerTag(t *testing.T) {
 	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
 	a := syncApp(root)
 	tt := ui.NewTester(a.view, 1000, 640)
-	if err := tt.Click("Single image"); err != nil {
-		t.Fatal(err)
-	}
+	openCell(t, tt, "alpha.png")
 	tt.Wheel(700, 400, 0, -1)
 	view := singleViewNow(t, a)
 	zoom, scroll := view.zoom, view.scroll.X

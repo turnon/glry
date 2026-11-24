@@ -40,6 +40,9 @@ func (a *app) singleView(c *ui.Context) {
 			})
 		}
 		switch {
+		case p == nil && len(a.history) == 0:
+			a.gridMessage(c, "No image opened", "Double-click an image in the folders view, or choose Open from its menu.", false)
+			return
 		case p == nil:
 			a.gridMessage(c, "No images in this folder", "Choose a folder with images in the file tree.", false)
 			return
@@ -683,18 +686,21 @@ func (a *app) clearSingle() {
 	a.singleLoading = false
 }
 
-// showSingle shows one image alone, the folders view's chosen photo when it is
-// one and the folder's first otherwise.
+// showSingle shows the single image view again, on the tag it was on. An
+// image opens there by a double click on its cell, or by Open in the
+// cell's menu: the folders view's choice alone does not open one.
 func (a *app) showSingle() {
 	if a.mode == viewSingle {
 		return
 	}
 	a.mode = viewSingle
-	if i := max(a.chosenPhoto(), 0); i < len(a.photos) {
-		a.showPhotoAt(i)
+	if a.tag >= 0 && a.tag < len(a.history) {
+		a.selectTag(a.tag)
 		return
 	}
-	a.loadSingle() // an empty folder has nothing to show
+	// Nothing opened yet: the view says how to open an image.
+	a.singlePhotos, a.single = nil, 0
+	a.clearSingle()
 }
 
 // stepSingle shows the image delta places from the one shown, within the
@@ -708,21 +714,6 @@ func (a *app) stepSingle(delta int) {
 	}
 	a.resetSingleZoom()
 	a.showInTag(n)
-}
-
-// chosenPhoto is the index in photos of the chosen folders item, or -1
-// when it chose a folder or nothing.
-func (a *app) chosenPhoto() int {
-	if a.chosen < 0 || a.chosen >= len(a.items) {
-		return -1
-	}
-	path := a.items[a.chosen].path
-	for i, p := range a.photos {
-		if p.path == path {
-			return i
-		}
-	}
-	return -1
 }
 
 // singlePhoto is the photo the single image view shows, or nil.
