@@ -511,17 +511,6 @@ func (a *app) buildFolderItems() {
 	a.folderPick.built = a.folderPick.built[:0]
 }
 
-// reload scans the selected folder and its subdirectories again.
-func (a *app) reload() {
-	if a.selected == "" {
-		return
-	}
-	delete(a.dirs, a.selected)
-	a.tree.Generation++
-	a.loadChildren(a.selected)
-	a.loadImages()
-}
-
 // requestThumb decodes a photo's thumbnail on a goroutine, once. The grid
 // asks only for the items it builds, which are those in view, so a large
 // folder decodes the thumbnails the user sees rather than all of them.
@@ -591,33 +580,6 @@ func (a *app) rememberThumb(p *photo) {
 		old.img = nil
 		old.state = thumbIdle
 	}
-}
-
-// chooseFolder asks for another tree root, on a goroutine so that the
-// native dialog's wait does not hold up the view.
-func (a *app) chooseFolder() {
-	win := a.win
-	if win == nil {
-		return
-	}
-	start := a.root
-	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-			Parent:      win,
-			Title:       "Choose a folder",
-			DefaultPath: start,
-			Directory:   true,
-			ButtonLabel: "Open",
-		})
-		if err != nil {
-			log.Printf("choosing a folder: %v", err)
-			return
-		}
-		if len(paths) == 0 {
-			return
-		}
-		a.post(func() { a.setRoot(paths[0]) })
-	}()
 }
 
 // view builds the window: the rail that chooses the view, and beside it
