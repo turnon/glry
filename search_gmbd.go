@@ -98,6 +98,6 @@ func (g gmbd) search(query, scope string, page int) ([]searchResult, int, error)
 
 // index is not available from the gmbd search way: the service keeps its own
 // index.
-func (g gmbd) index(path string) (chan struct{}, error) {
+func (g gmbd) index(path string, recursive bool) (chan indexProgress, error) {
 	return nil, fmt.Errorf("the gmbd search way cannot index images")
 }

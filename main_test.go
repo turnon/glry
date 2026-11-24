@@ -49,7 +49,9 @@ func (s *pageSearcher) search(query, scope string, page int) ([]searchResult, in
 	return results, s.total, nil
 }
 
-func (s *pageSearcher) index(path string) (chan struct{}, error) { return nil, nil }
+func (s *pageSearcher) index(path string, recursive bool) (chan indexProgress, error) {
+	return nil, nil
+}
 
 func singleViewNow(t *testing.T, a *app) *tagView {
 	t.Helper()
@@ -803,7 +805,7 @@ func TestSearchViewFindsImages(t *testing.T) {
 	if len(a.searchResults) != 1 || a.searchResults[0].photo.path != found {
 		t.Fatalf("the search found %v, want %q", a.searchResults, found)
 	}
-	if !tt.HasText("0.750") || !tt.HasText("1 / 1") {
+	if !tt.HasText("0.750") || !tt.HasText("Showing 1/1") {
 		t.Errorf("the view does not show the result and its count: %q", tt.Texts())
 	}
 	if tt.HasText("Next page") || tt.HasText("Previous page") {
@@ -867,7 +869,7 @@ func TestSearchViewLoadsMoreAtTheEnd(t *testing.T) {
 	if len(a.searchResults) != searchPageSize {
 		t.Fatalf("the first page holds %d results, want %d", len(a.searchResults), searchPageSize)
 	}
-	if !tt.HasText(fmt.Sprintf("%d / %d", searchPageSize, total)) {
+	if !tt.HasText(fmt.Sprintf("Showing %d/%d", searchPageSize, total)) {
 		t.Errorf("the view does not show the count: %q", tt.Texts())
 	}
 	if !slices.Equal(asked, []string{"1"}) {
@@ -899,7 +901,7 @@ func TestSearchViewLoadsMoreAtTheEnd(t *testing.T) {
 		t.Fatalf("the search loaded %d results from pages %v, want %d from 1, 2, 3",
 			len(a.searchResults), asked, total)
 	}
-	if !tt.HasText(fmt.Sprintf("%d / %d", total, total)) {
+	if !tt.HasText(fmt.Sprintf("Showing %d/%d", total, total)) {
 		t.Errorf("the view does not show the count loaded: %q", tt.Texts())
 	}
 }

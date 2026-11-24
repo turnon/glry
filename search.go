@@ -35,18 +35,26 @@ func (a *app) searchView(c *ui.Context) {
 		a.searchHeader(c)
 		ui.Divider(c)
 		a.searchResultsView(c)
-		if a.indexPath != "" {
-			ui.Divider(c)
-			a.indexStatus(c)
-		}
 	})
-	if a.searchResults != nil && !a.searchLoading && a.searchErr == "" {
+	showResults := a.searchResults != nil && !a.searchLoading && a.searchErr == ""
+	notice, tooltip, failed := a.indexNotice()
+	if showResults {
+		showing := fmt.Sprintf("Showing %d/%d", len(a.searchResults), a.searchTotal)
+		if notice == "" {
+			notice, tooltip = showing, "Images shown and found"
+		} else {
+			notice += ". " + showing
+		}
+	}
+	if notice != "" {
+		color := t.TextMuted
+		if failed {
+			color = t.Danger
+		}
 		ui.Overlay(c, func() {
-			ui.Badge(c, fmt.Sprintf("%d / %d", len(a.searchResults), a.searchTotal)).
-				Absolute().Bottom(0).Right(0).
+			ui.Badge(c, notice).Absolute().Bottom(0).Right(0).
 				Padding(3, 8).Radius(8, 0, 0, 0).
-				Background(t.Surface).TextColor(t.TextMuted).
-				Tooltip("Images shown and found")
+				Background(t.Surface).TextColor(color).Tooltip(tooltip)
 		})
 	}
 }
@@ -373,11 +381,18 @@ func (a *app) openSearchResult(c *ui.Context) {
 	c.Invalidate()
 }
 
+// indexProgress says how far an index got: how many images it has handled,
+// how many it has to handle, and how many of them it left out of the index.
+type indexProgress struct {
+	done, total, skipped int
+}
+
 // searcher is a search way: it finds the images matching a query within a
-// scope, one page at a time, and indexes the images at a path.
+// scope, one page at a time, and indexes the images at a path, those under a
+// folder too when recursive.
 type searcher interface {
 	search(query, scope string, page int) ([]searchResult, int, error)
-	index(path string) (chan struct{}, error)
+	index(path string, recursive bool) (chan indexProgress, error)
 }
 
 // setSearcher chooses the backend the search asks, from the configured way.

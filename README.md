@@ -13,7 +13,7 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `search_gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`.
 - `search_sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, and indexing folders or images into it.
 - `embedding.go` — the embedding service: query text and base64 images in, vectors out.
-- `index.go` — indexing progress and the `Index` context menu item of folders and images.
+- `index.go` — indexing progress and the `Index` and `Index Recursively` context menu items of folders and images.
 - `config.go` — `~/.glry/config.json`: cell-size, search, and embedding settings, plus the config view's form.
 - `files.go` — reading folders, listing images, decoding thumbnails, and applying EXIF orientation.
 - `main_test.go` — tests for the views, folder scanning, thumbnails, search, and the single-image view.

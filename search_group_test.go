@@ -27,7 +27,9 @@ func (s *scoredSearcher) search(query, scope string, page int) ([]searchResult, 
 	return s.pages[page-1], s.total, nil
 }
 
-func (s *scoredSearcher) index(path string) (chan struct{}, error) { return nil, nil }
+func (s *scoredSearcher) index(path string, recursive bool) (chan indexProgress, error) {
+	return nil, nil
+}
 
 // result is an image of dir with a score, as a search result.
 func result(dir, name string, score float64) searchResult {

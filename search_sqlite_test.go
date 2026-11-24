@@ -1,17 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ensureSQLiteDB creates an empty images table at path, as the sqlite tests
@@ -84,13 +87,14 @@ func TestIndexFromAppEmbedsFolderRecursively(t *testing.T) {
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
 	a.embedURL = srv.URL
-	a.startIndex(dir)
+	a.startIndex(dir, true)
 
 	if a.indexErr != "" {
 		t.Fatalf("indexing failed: %s", a.indexErr)
 	}
-	if a.indexRunning || a.indexCount != 2 {
-		t.Errorf("the index is running %v after %d images, want done with 2", a.indexRunning, a.indexCount)
+	if a.indexRunning || a.indexCount != 2 || a.indexTotal != 2 {
+		t.Errorf("the index is running %v after %d of %d images, want done with 2 of 2",
+			a.indexRunning, a.indexCount, a.indexTotal)
 	}
 	if requests != 1 || images != 2 {
 		t.Errorf("the embed service got %d requests for %d images, want 1 for 2", requests, images)
@@ -160,13 +164,13 @@ func TestIndexFromAppCopiesAndSkipsKnownImages(t *testing.T) {
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
 	a.embedURL = srv.URL
-	a.startIndex(aDir)
-	a.startIndex(bDir)
+	a.startIndex(aDir, true)
+	a.startIndex(bDir, true)
 	if requests != 1 || images != 1 {
 		t.Fatalf("the embed service got %d requests for %d images, want one image", requests, images)
 	}
 	// Indexing the same path again skips the row it already holds.
-	a.startIndex(bDir)
+	a.startIndex(bDir, true)
 	if requests != 1 || images != 1 {
 		t.Errorf("reindexing asked for %d requests for %d images, want none", requests, images)
 	}
@@ -527,5 +531,371 @@ func TestSQLiteSearchScopeMatchesNothing(t *testing.T) {
 	}
 	if len(a.searchResults) != 0 || a.searchTotal != 0 {
 		t.Errorf("the empty scope found %d of %d images, want none", len(a.searchResults), a.searchTotal)
+	}
+}
+
+// The connections wait for each other's locks and let reads run beside the
+// index's writes, rather than fail with SQLITE_BUSY.
+func TestSQLiteDSNUsesWALAndWaits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	db, err := sql.Open("sqlite", (sqlite{path: path}).dsn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var mode string
+	if err := db.QueryRow(`pragma journal_mode`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Errorf("the journal mode is %q, want wal", mode)
+	}
+	var timeout int
+	if err := db.QueryRow(`pragma busy_timeout`).Scan(&timeout); err != nil {
+		t.Fatal(err)
+	}
+	if timeout != sqliteBusyTimeout {
+		t.Errorf("the busy timeout is %d, want %d", timeout, sqliteBusyTimeout)
+	}
+}
+
+// A search must keep working while an index writes the same database, as
+// Submit and Index do when the user runs them together.
+func TestSQLiteIndexAndSearchAtOnce(t *testing.T) {
+	dir := t.TempDir()
+	imageDir := filepath.Join(dir, "Images")
+	if err := os.Mkdir(imageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const imageCount = 64
+	for i := 0; i < imageCount; i++ {
+		writePNG(t, filepath.Join(imageDir, fmt.Sprintf("a%02d.png", i)), indexColor(i))
+	}
+
+	indexErr := make(chan error, 1)
+	s := sqlite{
+		path: filepath.Join(dir, "db.sqlite"),
+		embed: func(string) ([]float32, error) {
+			vector := make([]float32, sqliteVectorDims)
+			vector[0] = 1
+			return vector, nil
+		},
+		images: func(encoded ...string) ([][]float32, error) {
+			// Keep the index going long enough for searches to overlap it.
+			time.Sleep(20 * time.Millisecond)
+			vectors := make([][]float32, len(encoded))
+			for i := range vectors {
+				vectors[i] = make([]float32, sqliteVectorDims)
+				vectors[i][0] = float32(i + 1)
+			}
+			return vectors, nil
+		},
+		onError: func(err error) {
+			select {
+			case indexErr <- err:
+			default:
+			}
+		},
+	}
+
+	progress, err := s.index(imageDir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	total := 0
+	go func() {
+		for p := range progress {
+			total = p.total
+		}
+		close(done)
+	}()
+
+	searches := 0
+	var searchErr error
+loop:
+	for {
+		select {
+		case <-done:
+			break loop
+		default:
+		}
+		if _, _, err := s.search("anything", "", 1); err != nil {
+			searchErr = err
+			break
+		}
+		searches++
+	}
+	<-done
+	select {
+	case err := <-indexErr:
+		t.Fatalf("indexing stopped while searching: %v", err)
+	default:
+	}
+	if searchErr != nil {
+		t.Fatalf("searching stopped while indexing: %v", searchErr)
+	}
+	if searches == 0 {
+		t.Fatal("no search ran while indexing")
+	}
+	if total != imageCount {
+		t.Errorf("the index reported %d images, want %d", total, imageCount)
+	}
+	var count int
+	db, err := sql.Open("sqlite", s.dsn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.QueryRow(`select count(*) from images`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != imageCount {
+		t.Errorf("the database holds %d images, want %d", count, imageCount)
+	}
+}
+
+// The embedding service takes only the formats it lists; the viewer's SVGs
+// and other files must not reach it.
+func TestEmbeddingImageFormats(t *testing.T) {
+	for _, name := range []string{
+		"photo.jpg", "photo.JPEG", "photo.jfif", "photo.png", "photo.webp",
+		"photo.gif", "photo.bmp", "photo.tif", "photo.tiff", "photo.avif",
+	} {
+		if !isEmbeddingImageName(name) {
+			t.Errorf("%s is not passed to the embedding service", name)
+		}
+	}
+	for _, name := range []string{"drawing.svg", "photo.heic", "notes.txt", "image"} {
+		if isEmbeddingImageName(name) {
+			t.Errorf("%s is passed to the embedding service", name)
+		}
+	}
+}
+
+func TestIndexSkipsFormatsEmbeddingCannotRead(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "alpha.png"), indexColor(6))
+	svg := filepath.Join(dir, "logo.svg")
+	if err := os.WriteFile(svg, []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var requests, images int
+	srv := newIndexTestServer(t, &requests, &images)
+	defer srv.Close()
+
+	dbPath := filepath.Join(dir, "db.sqlite")
+	a := syncApp(dir)
+	sqliteAt(a, dbPath)
+	a.embedURL = srv.URL
+	a.startIndex(dir, true)
+
+	if a.indexErr != "" {
+		t.Fatalf("indexing failed: %s", a.indexErr)
+	}
+	if a.indexCount != 1 || a.indexTotal != 1 {
+		t.Errorf("the index handled %d of %d images, want the PNG alone", a.indexCount, a.indexTotal)
+	}
+	if requests != 1 || images != 1 {
+		t.Errorf("the embed service got %d requests for %d images, want the PNG alone", requests, images)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`select name from images`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != "alpha.png" {
+		t.Errorf("the database holds %v, want alpha.png alone", names)
+	}
+}
+
+// A batch the embedding service rejects is halved until each image is sent
+// alone and can be indexed.
+func TestIndexSplitsFailedEmbeddingBatches(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 4; i++ {
+		writePNG(t, filepath.Join(dir, fmt.Sprintf("a%d.png", i)), indexColor(i+1))
+	}
+	var calls []int
+	s := sqlite{
+		path: filepath.Join(dir, "db.sqlite"),
+		images: func(encoded ...string) ([][]float32, error) {
+			calls = append(calls, len(encoded))
+			if len(encoded) > 1 {
+				return nil, fmt.Errorf("the service refuses batches")
+			}
+			vector := make([]float32, sqliteVectorDims)
+			vector[0] = 1
+			return [][]float32{vector}, nil
+		},
+	}
+	progress, err := s.index(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range progress {
+	}
+	if got := fmt.Sprint(calls); got != "[4 2 1 1 2 1 1]" {
+		t.Errorf("the embedding service got batches %v, want [4 2 1 1 2 1 1]", calls)
+	}
+
+	db, err := sql.Open("sqlite", s.dsn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`select count(*) from images`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 4 {
+		t.Errorf("the database holds %d images, want 4", count)
+	}
+}
+
+// An image whose embedding still fails alone is logged, skipped, and does
+// not stop the images after it.
+func TestIndexSkipsImageWhoseEmbeddingFails(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "alpha.png"), indexColor(6))
+	writePNG(t, filepath.Join(dir, "beta.png"), indexColor(7))
+
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previous)
+
+	failNext := true
+	s := sqlite{
+		path: filepath.Join(dir, "db.sqlite"),
+		images: func(encoded ...string) ([][]float32, error) {
+			if len(encoded) > 1 {
+				return nil, fmt.Errorf("the service refuses batches")
+			}
+			if failNext {
+				failNext = false
+				return nil, fmt.Errorf("the service cannot read the image")
+			}
+			vector := make([]float32, sqliteVectorDims)
+			vector[0] = 1
+			return [][]float32{vector}, nil
+		},
+	}
+	progress, err := s.index(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total, done, skipped := 0, 0, 0
+	for p := range progress {
+		total, done, skipped = p.total, p.done, p.skipped
+	}
+	if total != 2 || done != 2 {
+		t.Errorf("the index reported %d of %d images, want 2 of 2", done, total)
+	}
+	if skipped != 1 {
+		t.Errorf("the index reported %d skipped images, want the one that failed to embed", skipped)
+	}
+	if !strings.Contains(logs.String(), "skipping") {
+		t.Errorf("the skipped image was not logged: %q", logs.String())
+	}
+
+	db, err := sql.Open("sqlite", s.dsn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`select count(*) from images`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("the database holds %d images, want the one that embedded", count)
+	}
+}
+
+// Indexing a folder adds its own images, and only reaches the images of the
+// folders under it when the index is recursive.
+func TestIndexFolderReachesNestedFoldersOnlyWhenRecursive(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "Trips")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, filepath.Join(dir, "alpha.png"), indexColor(1))
+	writePNG(t, filepath.Join(sub, "beach.png"), indexColor(2))
+
+	var requests, images int
+	srv := newIndexTestServer(t, &requests, &images)
+	defer srv.Close()
+
+	dbPath := filepath.Join(dir, "db.sqlite")
+	a := syncApp(dir)
+	sqliteAt(a, dbPath)
+	a.embedURL = srv.URL
+	a.startIndex(dir, false)
+	if a.indexErr != "" {
+		t.Fatalf("indexing failed: %s", a.indexErr)
+	}
+	if a.indexCount != 1 || a.indexTotal != 1 {
+		t.Errorf("the index handled %d of %d images, want the folder's own 1", a.indexCount, a.indexTotal)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	names := func() []string {
+		t.Helper()
+		rows, err := db.Query(`select name from images order by name`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var names []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				t.Fatal(err)
+			}
+			names = append(names, name)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return names
+	}
+	if got := strings.Join(names(), ","); got != "alpha.png" {
+		t.Errorf("the database holds %q, want alpha.png alone", got)
+	}
+
+	a.startIndex(dir, true)
+	if a.indexErr != "" {
+		t.Fatalf("indexing failed: %s", a.indexErr)
+	}
+	if a.indexCount != 2 || a.indexTotal != 2 {
+		t.Errorf("the index handled %d of %d images, want the folder's 2", a.indexCount, a.indexTotal)
+	}
+	if got := strings.Join(names(), ","); got != "alpha.png,beach.png" {
+		t.Errorf("the database holds %q, want the folder's two images", got)
 	}
 }

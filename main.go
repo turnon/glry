@@ -219,13 +219,17 @@ type app struct {
 	searchGroupList   ui.ListState
 
 	// indexPath is the image or folder the last index added, indexCount how
-	// many images it handled, and indexRunning whether it is still going.
-	// indexQueue holds the folders added while it runs. indexErr says why it
-	// could not start or stopped, and indexGen tells the progress of an index
-	// started meanwhile to drop.
+	// many images it handled, and indexTotal how many it has to handle.
+	// indexSkipped is how many of those it left out of the index.
+	// indexRunning tells whether it is still going, and indexQueue holds the
+	// paths, with whether each reaches the folders under it, added while it
+	// runs. indexErr says why it could not start or stopped, and indexGen
+	// tells the progress of an index started meanwhile to drop.
 	indexPath    string
 	indexCount   int
-	indexQueue   []string
+	indexTotal   int
+	indexSkipped int
+	indexQueue   []indexTarget
 	indexRunning bool
 	indexErr     string
 	indexGen     uint64

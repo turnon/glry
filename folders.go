@@ -40,9 +40,9 @@ func (a *app) treeRow(c *ui.Context, dir string) {
 	row := ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center)
 	row.Children(func() {
 		ui.Icon(c, folderIcon).Size(treeIconSize, treeIconSize).TextColor(icon)
-		ui.Text(c, rootName(dir)).SingleLine().ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir) })
+		ui.Text(c, rootName(dir)).SingleLine().ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir, true) })
 	})
-	row.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir) })
+	row.ContextMenu(func(m *ui.Menu) { a.indexMenuItem(m, dir, true) })
 }
 
 // treeIconSize is the size of a tree row's folder icon, and treeIconGap
@@ -222,7 +222,7 @@ func (a *app) folderCell(c *ui.Context, m gridModel, i int, path, name string) {
 			ui.Text(c, name).FontSize(12).SingleLine().TextAlign(ui.Center).FillWidth().Tooltip(name)
 		}
 	})
-	cell.ContextMenu(func(m *ui.Menu) { a.indexGridMenuItem(m, path) })
+	cell.ContextMenu(func(m *ui.Menu) { a.indexGridMenuItem(m, path, true) })
 }
 
 func (a *app) photoCell(c *ui.Context, m gridModel, i int, p *photo) {
@@ -262,7 +262,7 @@ func (a *app) photoCell(c *ui.Context, m gridModel, i int, p *photo) {
 	})
 	cell.ContextMenu(func(m *ui.Menu) {
 		a.openPhotoMenuItem(c, m, p.path)
-		a.indexGridMenuItem(m, p.path)
+		a.indexGridMenuItem(m, p.path, false)
 	})
 }
 

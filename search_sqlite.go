@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,6 +32,9 @@ const (
 	// be pushed into the KNN query, where each one costs a pass over the
 	// dir column. Wider scopes narrow the nearest rows instead.
 	sqliteScopeDirs = 16
+	// sqliteBusyTimeout is how long a connection waits for another one's
+	// lock before it gives up, in milliseconds.
+	sqliteBusyTimeout = 5000
 )
 
 // sqliteSchema creates the images table on a new database. The id column
@@ -62,6 +66,19 @@ func defaultSQLitePath() string {
 	return filepath.Join(glryDir(), "db.sqlite")
 }
 
+// dsn is the DSN of s's database. WAL lets a search read the database while
+// an index writes it, and the busy timeout makes a connection wait for
+// another one's lock rather than fail a search or stop an index with
+// SQLITE_BUSY.
+func (s sqlite) dsn() string {
+	u := url.URL{Scheme: "file", Path: s.path}
+	q := u.Query()
+	q.Set("_busy_timeout", strconv.Itoa(sqliteBusyTimeout))
+	q.Set("_journal_mode", "wal")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // search embeds query, asks the SQLite vector table for the nearest images,
 // and returns the page wanted. It runs on a goroutine, so the photos it
 // makes are ready for the thumbnails the view asks for.
@@ -75,7 +92,7 @@ func (s sqlite) search(query, scope string, page int) ([]searchResult, int, erro
 		return nil, 0, err
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", s.dsn())
 	if err != nil {
 		return nil, 0, fmt.Errorf("opening %s: %w", dbPath, err)
 	}
@@ -278,7 +295,7 @@ func (s sqlite) ensureDB() error {
 		}
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", s.dsn())
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", path, err)
 	}
@@ -324,18 +341,19 @@ type sqliteIndexRecord struct {
 }
 
 // index adds the images at path to the database, path being an image or a
-// folder whose images it finds recursively. Images whose digest is already
-// in the database are copied or skipped rather than embedded again, and the
-// new ones are embedded a batch at a time. The channel reports each image
-// handled and closes when the index is done; the embedding and insertion run
-// on a goroutine.
-func (s sqlite) index(path string) (chan struct{}, error) {
+// folder whose images it finds, under it too when recursive. Images whose
+// digest is already in the database are copied or skipped rather than
+// embedded again, and the new ones are embedded a batch at a time. The
+// channel reports how many of the images it has handled and how many there
+// are, and closes when the index is done; the embedding and insertion run on
+// a goroutine.
+func (s sqlite) index(path string, recursive bool) (chan indexProgress, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	if !info.IsDir() && !isImageName(path) {
-		return nil, fmt.Errorf("%s is not an image", path)
+	if !info.IsDir() && !isEmbeddingImageName(path) {
+		return nil, fmt.Errorf("%s is not an image the embedding service reads", path)
 	}
 	if s.images == nil {
 		return nil, fmt.Errorf("indexing needs an embedding service")
@@ -343,19 +361,20 @@ func (s sqlite) index(path string) (chan struct{}, error) {
 	if err := s.ensureDB(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", s.path)
+	db, err := sql.Open("sqlite", s.dsn())
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", s.path, err)
 	}
-	progress := make(chan struct{})
+	progress := make(chan indexProgress)
 	go func() {
 		defer close(progress)
 		defer db.Close()
-		paths, err := indexImages(path, info.IsDir())
+		paths, err := indexImages(path, info.IsDir(), recursive)
 		if err != nil {
 			s.indexFailed(path, err)
 			return
 		}
+		progress <- indexProgress{total: len(paths)}
 		if err := s.indexFiles(db, paths, progress); err != nil {
 			s.indexFailed(path, err)
 		}
@@ -373,10 +392,25 @@ func (s sqlite) indexFailed(path string, err error) {
 }
 
 // indexImages lists the images at path: path itself when it is a file, else
-// the images under it, skipping hidden files and folders.
-func indexImages(path string, dir bool) ([]string, error) {
+// the images in it, or under it too when recursive. Hidden files and folders
+// are left out of the index.
+func indexImages(path string, dir, recursive bool) ([]string, error) {
 	if !dir {
 		return []string{path}, nil
+	}
+	if !recursive {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nil, err
+		}
+		paths := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || !isEmbeddingImageName(entry.Name()) {
+				continue
+			}
+			paths = append(paths, filepath.Join(path, entry.Name()))
+		}
+		return paths, nil
 	}
 	var paths []string
 	err := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
@@ -392,7 +426,7 @@ func indexImages(path string, dir bool) ([]string, error) {
 			}
 			return nil
 		}
-		if d.IsDir() || !isImageName(d.Name()) {
+		if d.IsDir() || !isEmbeddingImageName(d.Name()) {
 			return nil
 		}
 		paths = append(paths, p)
@@ -405,8 +439,9 @@ func indexImages(path string, dir bool) ([]string, error) {
 }
 
 // indexFiles adds paths to the database, embedding the images the database
-// does not know in batches. It reports each image it inserts or skips.
-func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- struct{}) error {
+// does not know in batches. It reports each image it handles, with how many
+// images there are.
+func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- indexProgress) error {
 	// A batch keeps the images to embed and a record of each insert, so
 	// that a repeated digest in the same batch is embedded once and its
 	// copies take its vector.
@@ -415,44 +450,82 @@ func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- struct{})
 		records []sqliteIndexRecord
 		vectors map[string]int
 	)
+	done, skipped := 0, 0
+	report := func() {
+		done++
+		progress <- indexProgress{done: done, total: len(paths), skipped: skipped}
+	}
+	// skip reports n images left out of the index.
+	skip := func(n int) {
+		skipped += n
+		for i := 0; i < n; i++ {
+			report()
+		}
+	}
 	reset := func() {
 		unique = unique[:0]
 		records = records[:0]
 		vectors = nil
+	}
+	// embedAndInsert embeds the images and inserts them with their vectors.
+	// A batch the embedding service rejects is halved and tried again, so
+	// that one unreadable image does not stop the index. An image that still
+	// fails alone is logged and skipped.
+	var embedAndInsert func(images []sqliteIndexImage, records [][]sqliteIndexRecord) error
+	embedAndInsert = func(images []sqliteIndexImage, records [][]sqliteIndexRecord) error {
+		input := make([]string, len(images))
+		for i, image := range images {
+			input[i] = base64.StdEncoding.EncodeToString(image.data)
+		}
+		embedded, err := s.images(input...)
+		if err != nil {
+			if len(images) == 1 {
+				log.Printf("skipping %s: %v", images[0].path, err)
+				skip(len(records[0]))
+				return nil
+			}
+			mid := len(images) / 2
+			if err := embedAndInsert(images[:mid], records[:mid]); err != nil {
+				return err
+			}
+			return embedAndInsert(images[mid:], records[mid:])
+		}
+		if len(embedded) != len(images) {
+			return fmt.Errorf("the embedding service returned %d embeddings for %d images",
+				len(embedded), len(images))
+		}
+		for i := range images {
+			vector := s.vectorJSON(embedded[i])
+			for _, record := range records[i] {
+				image := record.image
+				if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
+					image.name, image.dir, image.digest, vector); err != nil {
+					return fmt.Errorf("adding %s: %w", image.path, err)
+				}
+				report()
+			}
+		}
+		return nil
 	}
 	flush := func() error {
 		if len(records) == 0 {
 			reset()
 			return nil
 		}
-		input := make([]string, len(unique))
-		for i, image := range unique {
-			input[i] = base64.StdEncoding.EncodeToString(image.data)
-		}
-		embedded, err := s.images(input...)
-		if err != nil {
-			return err
-		}
-		if len(embedded) != len(unique) {
-			return fmt.Errorf("the embedding service returned %d embeddings for %d images",
-				len(embedded), len(unique))
-		}
+		groups := make([][]sqliteIndexRecord, len(unique))
 		for _, record := range records {
-			image := record.image
-			if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
-				image.name, image.dir, image.digest, s.vectorJSON(embedded[record.vector])); err != nil {
-				return fmt.Errorf("adding %s: %w", image.path, err)
-			}
-			progress <- struct{}{}
+			groups[record.vector] = append(groups[record.vector], record)
 		}
+		err := embedAndInsert(unique, groups)
 		reset()
-		return nil
+		return err
 	}
 
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			log.Printf("indexing %s: %v", path, err)
+			skip(1)
 			continue
 		}
 		name, dir := filepath.Base(path), filepath.Dir(path)
@@ -466,7 +539,7 @@ func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- struct{})
 			return fmt.Errorf("looking up %s: %w", path, err)
 		}
 		if known {
-			progress <- struct{}{}
+			report()
 			continue
 		}
 
@@ -485,7 +558,7 @@ func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- struct{})
 			return fmt.Errorf("copying %s: %w", path, err)
 		}
 		if n > 0 {
-			progress <- struct{}{}
+			report()
 			continue
 		}
 

@@ -122,6 +122,17 @@ func isImageName(name string) bool {
 	return false
 }
 
+// isEmbeddingImageName reports whether a file's extension is a format the
+// embedding service reads. The viewer also shows SVG, which the service
+// cannot read, so indexing leaves it out.
+func isEmbeddingImageName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg", ".jfif", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif":
+		return true
+	}
+	return false
+}
+
 func isSVG(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".svg")
 }
