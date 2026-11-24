@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestLoadConfigCreatesDefaultFile(t *testing.T) {
@@ -110,11 +112,11 @@ func TestSaveConfigAppliesSearchWay(t *testing.T) {
 	a := syncApp(t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.json")
 	a.configPath = path
-	a.configJSON = `{
-		"cell": {"height": "20px", "width": "15px"},
-		"search": {"way": "sqlite"},
-		"embed": {"url": "http://example.test/embed", "model": "m"}
-	}`
+	a.config = configFile{
+		Cell:   cellConfig{Height: "20px", Width: "15px"},
+		Search: searchConfig{Way: "sqlite"},
+		Embed:  embedConfig{URL: "http://example.test/embed", Model: "m"},
+	}
 	a.saveConfig()
 	if a.configErr != "" {
 		t.Fatalf("saving the config failed: %s", a.configErr)
@@ -127,5 +129,109 @@ func TestSaveConfigAppliesSearchWay(t *testing.T) {
 	}
 	if a.configStatus != "Saved." {
 		t.Errorf("the config status is %q", a.configStatus)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the config was not written: %v", err)
+	}
+	var cfg configFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("the saved config is not JSON: %v\n%s", err, data)
+	}
+	if cfg.Cell.Width != "15px" || cfg.Cell.Height != "20px" || cfg.Search.Way != "sqlite" || cfg.Embed.URL != "http://example.test/embed" || cfg.Embed.Model != "m" {
+		t.Errorf("the saved config is %+v", cfg)
+	}
+}
+
+func TestSaveConfigRejectsBadCellSize(t *testing.T) {
+	a := syncApp(t.TempDir())
+	a.config = defaultConfigFile()
+	a.config.Cell.Width = "wide"
+	a.saveConfig()
+	if a.configErr != `cell.width: "wide" is not a size in pixels` {
+		t.Errorf("the config error is %q", a.configErr)
+	}
+	if a.configStatus != "" {
+		t.Errorf("a rejected config reports %q", a.configStatus)
+	}
+}
+
+func TestConfigViewEditsTheForm(t *testing.T) {
+	a := syncApp(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	a.loadSettings(path)
+	a.showConfig()
+	tt := ui.NewTester(a.view, 900, 600)
+	for _, text := range []string{"Cell", "Search", "Embedding", "Width", "Height", "Way", "URL", "Model", "Save"} {
+		if !tt.HasText(text) {
+			t.Errorf("the config form does not show %q: %q", text, tt.Texts())
+		}
+	}
+	if err := tt.Click("Width"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Key(ui.Cmd, ui.KeyA)
+	tt.Type("20px")
+	if err := tt.Click("Save"); err != nil {
+		t.Fatal(err)
+	}
+	if a.configErr != "" || a.configStatus != "Saved." {
+		t.Fatalf("saving the form reports %q / %q", a.configErr, a.configStatus)
+	}
+	if a.cellWidth != 20 {
+		t.Errorf("the form saved cell width %v, want 20", a.cellWidth)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the config was not written: %v", err)
+	}
+	var cfg configFile
+	if err := json.Unmarshal(data, &cfg); err != nil || cfg.Cell.Width != "20px" {
+		t.Errorf("the saved config is %+v, %v\n%s", cfg, err, data)
+	}
+}
+
+func TestConfigInputWidths(t *testing.T) {
+	a := syncApp(t.TempDir())
+	a.loadSettings(filepath.Join(t.TempDir(), "config.json"))
+	a.showConfig()
+	tt := ui.NewTester(a.view, 900, 600)
+	for _, tc := range []struct {
+		name  string
+		role  ui.Role
+		width float32
+	}{
+		{"Width", ui.RoleTextField, 200},
+		{"Height", ui.RoleTextField, 200},
+		{"Way", ui.RolePopUpButton, 200},
+		{"URL", ui.RoleTextField, 300},
+		{"Model", ui.RoleTextField, 400},
+	} {
+		info, ok := tt.AccessByRole(tc.role, tc.name)
+		if !ok {
+			t.Errorf("the config form has no %s control", tc.name)
+			continue
+		}
+		if info.Bounds.W != tc.width {
+			t.Errorf("%s is %v wide, want %v", tc.name, info.Bounds.W, tc.width)
+		}
+	}
+}
+
+func TestConfigSectionsHighlightOnHover(t *testing.T) {
+	a := syncApp(t.TempDir())
+	a.loadSettings(filepath.Join(t.TempDir(), "config.json"))
+	a.showConfig()
+	tt := ui.NewTester(a.view, 900, 600)
+	section, ok := tt.Find("Cell")
+	if !ok {
+		t.Fatal("the config form does not show the Cell section")
+	}
+	x, y := int(section.X+3), int(section.Y+3)
+	plain := tt.Image().RGBAAt(x, y)
+	tt.Move(section.X+section.W/2, section.Y+section.H/2)
+	hovered := tt.Image().RGBAAt(x, y)
+	if hovered == plain {
+		t.Errorf("the section stays %v under the pointer", plain)
 	}
 }

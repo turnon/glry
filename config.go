@@ -109,31 +109,6 @@ func formatPixels(v float32) string {
 	return strconv.FormatFloat(float64(v), 'f', -1, 32) + "px"
 }
 
-// configJSON formats the settings as the config file's JSON, for the
-// config view.
-func configJSON(s settings) string {
-	cfg := configFile{
-		Cell: cellConfig{
-			Width:  formatPixels(s.cell.width),
-			Height: formatPixels(s.cell.height),
-		},
-		Search: searchConfig{Way: string(s.searchWay)},
-		Embed:  embedConfig{URL: s.embedURL, Model: s.embedModel},
-	}
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	return string(data) + "\n"
-}
-
-// configText is the text the config view edits: path's contents when the
-// file holds JSON, else the JSON of s.
-func configText(path string, s settings) string {
-	data, err := os.ReadFile(path)
-	if err == nil && len(strings.TrimSpace(string(data))) > 0 {
-		return string(data)
-	}
-	return configJSON(s)
-}
-
 // glryDir is where the app keeps its files: ~/.glry.
 func glryDir() string {
 	home, err := os.UserHomeDir()
@@ -239,8 +214,8 @@ func parsePixels(s string) (float32, error) {
 	return float32(n), nil
 }
 
-// loadSettings reads path's config, applies its settings, and puts the
-// file's JSON in the config view's editor.
+// loadSettings reads path's config, applies its settings, and fills the
+// config view's form with them.
 func (a *app) loadSettings(path string) {
 	a.configPath = path
 	s := loadConfig(path)
@@ -248,10 +223,17 @@ func (a *app) loadSettings(path string) {
 	a.setSearcher(s.searchWay)
 	a.embedURL = s.embedURL
 	a.embedModel = s.embedModel
-	a.configJSON = configText(path, s)
+	a.config = configFile{
+		Cell: cellConfig{
+			Width:  formatPixels(s.cell.width),
+			Height: formatPixels(s.cell.height),
+		},
+		Search: searchConfig{Way: string(s.searchWay)},
+		Embed:  embedConfig{URL: s.embedURL, Model: s.embedModel},
+	}
 	a.configErr = ""
-	if !json.Valid([]byte(a.configJSON)) {
-		a.configErr = "The config is not valid JSON."
+	if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) > 0 && !json.Valid(data) {
+		a.configErr = "The config is not valid JSON; showing the defaults."
 	}
 	a.configStatus = ""
 	a.configStatusErr = false
@@ -266,23 +248,56 @@ func (a *app) showConfig() {
 	a.clearSingle()
 }
 
-// configView edits the config file as JSON.
+// configSection is a titled group of the config form, which shows the
+// theme's hover fill under the pointer.
+func configSection(c *ui.Context, title string, fn func()) {
+	t := c.Theme()
+	section := ui.Fieldset(c, title, fn).Padding(12).Radius(t.Radius).FillWidth()
+	if section.Hovered() {
+		section.Background(t.SurfaceHover)
+	}
+}
+
+// configView edits the config file as a form: a section for each part of
+// config.json's cell, search and embed objects.
 func (a *app) configView(c *ui.Context) {
 	t := c.Theme()
+	edited := func() {
+		a.configErr = ""
+		a.configStatus = ""
+	}
 	ui.Column(c).Fill().Background(t.Background).Padding(24).Gap(12).Children(func() {
 		ui.Text(c, "Config").FontSize(22).Bold()
-		ui.Text(c, "Edit the app's settings as JSON. Cell sizes are in pixels. search.way picks \"gmbd\" or \"sqlite\"; the sqlite way embeds the query through embed.").FontSize(12).TextColor(t.TextMuted)
-		editor := ui.TextArea(c, &a.configJSON).Label("Config JSON").Grow(1).FillWidth()
-		editor.Error(a.configErr)
-		editor.OnChange(func() {
-			a.configErr = ""
-			a.configStatus = ""
+		ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+			ui.Form(c, func() {
+				configSection(c, "Cell", func() {
+					ui.Field(c, "Width", func() {
+						ui.TextInput(c, &a.config.Cell.Width).Placeholder(formatPixels(defaultCellWidth)).FillWidth().MaxWidth(100).OnChange(edited)
+					})
+					ui.Field(c, "Height", func() {
+						ui.TextInput(c, &a.config.Cell.Height).Placeholder(formatPixels(defaultCellHeight)).FillWidth().MaxWidth(100).OnChange(edited)
+					})
+				})
+				configSection(c, "Search", func() {
+					ui.Field(c, "Way", func() {
+						ui.Select(c, &a.config.Search.Way, []string{string(searchWayGmbd), string(searchWaySQLite)}).FillWidth().MaxWidth(150).OnChange(edited)
+					})
+				})
+				configSection(c, "Embedding", func() {
+					ui.Field(c, "URL", func() {
+						ui.TextInput(c, &a.config.Embed.URL).Placeholder(defaultEmbedURL).FillWidth().MaxWidth(300).OnChange(edited)
+					})
+					ui.Field(c, "Model", func() {
+						ui.TextInput(c, &a.config.Embed.Model).Placeholder(defaultEmbedModel).FillWidth().MaxWidth(400).OnChange(edited)
+					})
+				})
+			}).FillWidth()
 		})
-		if a.configErr != "" {
-			ui.Text(c, a.configErr).FontSize(12).TextColor(t.Danger)
-		}
 		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.PrimaryButton(c, "Save").OnClick(a.saveConfig)
+			if a.configErr != "" {
+				ui.Text(c, a.configErr).FontSize(12).TextColor(t.Danger)
+			}
 			if a.configStatus != "" {
 				color := t.TextMuted
 				if a.configStatusErr {
@@ -297,44 +312,48 @@ func (a *app) configView(c *ui.Context) {
 	})
 }
 
-// saveConfig reads the editor's JSON, applies its settings, and writes
-// it to the config file when there is one. Invalid JSON or values stay in
-// the editor with a message; a write that fails keeps the applied settings
-// and says why.
+// saveConfig reads the form, applies its settings, and writes them to the
+// config file when there is one. A value it cannot read stays in the form
+// with a message; a write that fails keeps the applied settings and says
+// why.
 func (a *app) saveConfig() {
 	a.configErr = ""
 	a.configStatus = ""
 	a.configStatusErr = false
 
-	var cfg configFile
-	if err := json.Unmarshal([]byte(a.configJSON), &cfg); err != nil {
-		a.configErr = "Invalid JSON: " + err.Error()
-		return
-	}
-	width, err := parsePixels(cfg.Cell.Width)
+	width, err := parsePixels(a.config.Cell.Width)
 	if err != nil {
 		a.configErr = "cell.width: " + err.Error()
 		return
 	}
-	height, err := parsePixels(cfg.Cell.Height)
+	height, err := parsePixels(a.config.Cell.Height)
 	if err != nil {
 		a.configErr = "cell.height: " + err.Error()
 		return
 	}
-	way, err := parseSearchWay(cfg.Search.Way)
+	way, err := parseSearchWay(a.config.Search.Way)
 	if err != nil {
 		a.configErr = "search.way: " + err.Error()
 		return
 	}
-	embedURL := strings.TrimSpace(cfg.Embed.URL)
+	embedURL := strings.TrimSpace(a.config.Embed.URL)
 	if embedURL == "" {
 		embedURL = defaultEmbedURL
 	}
-	embedModel := strings.TrimSpace(cfg.Embed.Model)
+	embedModel := strings.TrimSpace(a.config.Embed.Model)
 	if embedModel == "" {
 		embedModel = defaultEmbedModel
 	}
 
+	cfg := configFile{
+		Cell: cellConfig{
+			Width:  formatPixels(width),
+			Height: formatPixels(height),
+		},
+		Search: searchConfig{Way: string(way)},
+		Embed:  embedConfig{URL: embedURL, Model: embedModel},
+	}
+	a.config = cfg
 	a.setCellSize(cellSize{width: width, height: height})
 	a.setSearcher(way)
 	a.embedURL = embedURL
@@ -343,7 +362,7 @@ func (a *app) saveConfig() {
 		a.configStatus = "Applied."
 		return
 	}
-	if err := writeConfigText(a.configPath, a.configJSON); err != nil {
+	if err := writeConfig(a.configPath, cfg); err != nil {
 		a.configStatus = err.Error()
 		a.configStatusErr = true
 		return
