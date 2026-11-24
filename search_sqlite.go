@@ -323,7 +323,7 @@ func (s sqlite) vectorJSON(v []float32) string {
 }
 
 // sqliteIndexBatch is how many new images one embedding request carries, and
-// so how many images a batch may insert along with copies of them.
+// so how many images one insert carries.
 const sqliteIndexBatch = 8
 
 // sqliteIndexImage is an image being indexed, with the bytes its digest was
@@ -451,16 +451,18 @@ func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- indexProg
 		vectors map[string]int
 	)
 	done, skipped := 0, 0
-	report := func() {
-		done++
+	// advance reports n images handled, with how many images there are.
+	advance := func(n int) {
+		done += n
 		progress <- indexProgress{done: done, total: len(paths), skipped: skipped}
+	}
+	report := func() {
+		advance(1)
 	}
 	// skip reports n images left out of the index.
 	skip := func(n int) {
 		skipped += n
-		for i := 0; i < n; i++ {
-			report()
-		}
+		advance(n)
 	}
 	reset := func() {
 		unique = unique[:0]
@@ -494,17 +496,25 @@ func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- indexProg
 			return fmt.Errorf("the embedding service returned %d embeddings for %d images",
 				len(embedded), len(images))
 		}
+		// Insert the batch's images in one statement rather than one per
+		// image, and report them once written.
+		values := make([]string, 0, len(records))
+		args := make([]any, 0, len(records)*4)
+		rows := 0
 		for i := range images {
 			vector := s.vectorJSON(embedded[i])
 			for _, record := range records[i] {
 				image := record.image
-				if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
-					image.name, image.dir, image.digest, vector); err != nil {
-					return fmt.Errorf("adding %s: %w", image.path, err)
-				}
-				report()
+				values = append(values, "(?, ?, ?, ?)")
+				args = append(args, image.name, image.dir, image.digest, vector)
+				rows++
 			}
 		}
+		if _, err := db.Exec(`insert into images(name, dir, digest, vector) values `+
+			strings.Join(values, ", "), args...); err != nil {
+			return fmt.Errorf("adding the images: %w", err)
+		}
+		advance(rows)
 		return nil
 	}
 	flush := func() error {
