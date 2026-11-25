@@ -31,6 +31,8 @@ func (s *scoredSearcher) index(path string, recursive bool) (chan indexProgress,
 	return nil, nil
 }
 
+func (s *scoredSearcher) remove(path string) error { return nil }
+
 // result is an image of dir with a score, as a search result.
 func result(dir, name string, score float64) searchResult {
 	return searchResult{

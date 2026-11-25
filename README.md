@@ -11,13 +11,15 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `search.go` — the search view: query/scope header, the results grid that loads more as it nears its end, and opening its chosen images.
 - `search_group.go` — the search view's grouped results: a row of one directory's images, ordered by score, that loads a batch as it scrolls sideways.
 - `search_gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`.
-- `search_sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, and indexing folders or images into it.
+- `search_sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, and indexing folders or images into it or removing them from it.
 - `embedding.go` — the embedding service: query text and base64 images in, vectors out.
 - `index.go` — indexing progress and the `Index` and `Index Recursively` context menu items of folders and images.
+- `remove.go` — the `Remove` context menu item: moving folders and images to the trash, taking them out of the index, and refreshing the folders view.
 - `config.go` — `~/.glry/config.json`: cell-size, search, and embedding settings, plus the config view's form.
 - `files.go` — reading folders, listing images, decoding thumbnails, and applying EXIF orientation.
 - `main_test.go` — tests for the views, folder scanning, thumbnails, search, and the single-image view.
-- `index_test.go` — tests for the Index menu item of folders and images.
+- `index_test.go` — tests for the Index menu items of folders and images.
+- `remove_test.go` — tests for the Remove menu items of folders and images.
 - `select_test.go` — tests for choosing several items in the folders and search grids, and opening or indexing them.
 - `search_sqlite_test.go` — tests for SQLite search and indexing.
 - `search_group_test.go` — tests for grouping the search results by directory, choosing several of them, and loading their rows sideways.

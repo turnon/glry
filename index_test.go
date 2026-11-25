@@ -135,6 +135,10 @@ func (s *queueIndexSearcher) index(path string, recursive bool) (chan indexProgr
 	return progress, nil
 }
 
+func (s *queueIndexSearcher) remove(path string) error { return nil }
+
+// galleryRightClick right-clicks the folders view's cell named name, not
+// the tree row that shows the same folder.
 func TestIndexQueuesFoldersWhileRunning(t *testing.T) {
 	a := newApp(t.TempDir())
 	searcher := &queueIndexSearcher{

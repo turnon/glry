@@ -234,6 +234,17 @@ type app struct {
 	indexErr     string
 	indexGen     uint64
 
+	// removePath is the image or folder the last Remove moved to the trash,
+	// removeRunning tells whether it is still going, and removeErr says why
+	// it stopped. removeGen tells the result of a removal started meanwhile
+	// to drop, and removePending the paths a frame still has to take out of
+	// the folders view and the tree.
+	removePath    string
+	removeRunning bool
+	removeErr     string
+	removeGen     uint64
+	removePending []removeTarget
+
 	// config is the config view's form, in config.json's shape, and
 	// configPath is where Save writes it. configErr says what Save could
 	// not read; configStatus says what Save did, and configStatusErr
@@ -251,6 +262,10 @@ type app struct {
 
 	// async runs slow work off the main thread. Tests make it run inline.
 	async func(func())
+
+	// trash moves a path to the trash. Tests replace it, as the real one
+	// needs the running app.
+	trash func(string) error
 }
 
 func newApp(root string) *app {
@@ -280,6 +295,7 @@ func newApp(root string) *app {
 		searchGroupRows:   map[string]*searchDirRow{},
 		sidebarWidth:      250,
 		thumbSlots:        make(chan struct{}, 4),
+		trash:             mygo.Shell.TrashItem,
 	}
 	a.setSearcher(d.searchWay)
 	a.setCellSize(d.cell)
@@ -585,6 +601,7 @@ func (a *app) rememberThumb(p *photo) {
 // view builds the window: the rail that chooses the view, and beside it
 // the folders view, the search, one image alone, or the config.
 func (a *app) view(c *ui.Context) {
+	a.applyRemoved()
 	ui.Row(c).Fill().Children(func() {
 		a.rail(c)
 		ui.Divider(c)

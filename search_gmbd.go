@@ -101,3 +101,9 @@ func (g gmbd) search(query, scope string, page int) ([]searchResult, int, error)
 func (g gmbd) index(path string, recursive bool) (chan indexProgress, error) {
 	return nil, fmt.Errorf("the gmbd search way cannot index images")
 }
+
+// remove is not available from the gmbd search way: the service keeps its
+// own index.
+func (g gmbd) remove(path string) error {
+	return fmt.Errorf("the gmbd search way cannot remove images from its index")
+}

@@ -37,7 +37,10 @@ func (a *app) searchView(c *ui.Context) {
 		a.searchResultsView(c)
 	})
 	showResults := a.searchResults != nil && !a.searchLoading && a.searchErr == ""
-	notice, tooltip, failed := a.indexNotice()
+	notice, tooltip, failed := a.removeNotice()
+	if notice == "" {
+		notice, tooltip, failed = a.indexNotice()
+	}
 	if showResults {
 		showing := fmt.Sprintf("Showing %d/%d", len(a.searchResults), a.searchTotal)
 		if notice == "" {
@@ -388,11 +391,12 @@ type indexProgress struct {
 }
 
 // searcher is a search way: it finds the images matching a query within a
-// scope, one page at a time, and indexes the images at a path, those under a
-// folder too when recursive.
+// scope, one page at a time, indexes the images at a path, those under a
+// folder too when recursive, and removes a path from its index.
 type searcher interface {
 	search(query, scope string, page int) ([]searchResult, int, error)
 	index(path string, recursive bool) (chan indexProgress, error)
+	remove(path string) error
 }
 
 // setSearcher chooses the backend the search asks, from the configured way.

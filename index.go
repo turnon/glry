@@ -22,6 +22,7 @@ func (a *app) startIndex(path string, recursive bool) {
 	if a.searcher == nil || path == "" {
 		return
 	}
+	a.removeErr = "" // the index takes the notice from the last removal
 	target := indexTarget{path: path, recursive: recursive}
 	if a.indexRunning {
 		a.indexQueue = append(a.indexQueue, target)

@@ -53,6 +53,8 @@ func (s *pageSearcher) index(path string, recursive bool) (chan indexProgress, e
 	return nil, nil
 }
 
+func (s *pageSearcher) remove(path string) error { return nil }
+
 func singleViewNow(t *testing.T, a *app) *tagView {
 	t.Helper()
 	view := a.currentTagView()

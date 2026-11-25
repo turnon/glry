@@ -382,6 +382,28 @@ func (s sqlite) index(path string, recursive bool) (chan indexProgress, error) {
 	return progress, nil
 }
 
+// remove deletes path from the database: its image row, and, when path is a
+// folder, the rows of its images, those in the folders under it too. A path
+// that is not in the database is left alone.
+func (s sqlite) remove(path string) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", s.dsn())
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", s.path, err)
+	}
+	defer db.Close()
+	prefix := strings.TrimSuffix(path, string(filepath.Separator)) + string(filepath.Separator)
+	_, err = db.Exec(`delete from images
+		where (dir = ? and name = ?) or dir = ? or instr(dir, ?) = 1`,
+		filepath.Dir(path), filepath.Base(path), path, prefix)
+	if err != nil {
+		return fmt.Errorf("removing %s from %s: %w", path, s.path, err)
+	}
+	return nil
+}
+
 // indexFailed logs why indexing path stopped and reports it, when the app
 // asked for that.
 func (s sqlite) indexFailed(path string, err error) {
