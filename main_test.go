@@ -14,6 +14,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -818,6 +819,46 @@ func TestSearchViewFindsImages(t *testing.T) {
 	}
 }
 
+func TestSearchViewPicksImageAsQuery(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "query.png")
+	writePNG(t, image, color.RGBA{R: 255, A: 255})
+	searcher := &pageSearcher{pages: [][]string{{image}}, total: 1}
+
+	a := syncApp(root)
+	a.searcher = searcher
+	a.pickImage = func(*mygo.Window) ([]string, error) {
+		return []string{image}, nil
+	}
+	a.showSearch()
+	tt := ui.NewTester(a.view, 1000, 640)
+
+	if _, ok := tt.Find("Search by image"); !ok {
+		t.Fatalf("the empty query shows %q, want the picture icon", tt.Texts())
+	}
+	if err := tt.Click("Search by image"); err != nil {
+		t.Fatal(err)
+	}
+	if a.searchQuery != image {
+		t.Errorf("the query is %q, want the picked image %q", a.searchQuery, image)
+	}
+	if len(searcher.asked) != 0 || a.searchResults != nil {
+		t.Errorf("picking %s ran the search: it asked for pages %v", image, searcher.asked)
+	}
+	if _, ok := tt.Find("Search by image"); ok {
+		t.Error("the picture icon still shows while the query holds an image")
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(searcher.asked, []int{1}) {
+		t.Errorf("Submit asked for pages %v, want page 1", searcher.asked)
+	}
+	if len(a.searchResults) != 1 || a.searchResults[0].photo.path != image {
+		t.Errorf("the picked image found %v, want the search to run on Submit", a.searchResults)
+	}
+}
+
 func TestSearchViewLoadsMoreAtTheEnd(t *testing.T) {
 	root := t.TempDir()
 	const total = 2*searchPageSize + 5
@@ -844,11 +885,12 @@ func TestSearchViewLoadsMoreAtTheEnd(t *testing.T) {
 				fmt.Fprint(w, ",")
 			}
 			n := 0
-			if page == "1" {
+			switch page {
+			case "1":
 				n = i
-			} else if page == "2" {
+			case "2":
 				n = searchPageSize + i
-			} else {
+			default:
 				n = 2*searchPageSize + i
 			}
 			path := filepath.Join(root, fmt.Sprintf("img%02d.png", n))

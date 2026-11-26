@@ -42,9 +42,13 @@ type gmbdSearchResponse struct {
 
 // search asks the gmbd service at g.url which images match query within
 // scope on page, and returns what it found and how many it counted in all.
-// It runs on a goroutine, so the photos it makes are ready for the
-// thumbnails the view asks for.
+// A query naming a local image reports why the gmbd way cannot search by
+// it, as the service embeds text alone. It runs on a goroutine, so the
+// photos it makes are ready for the thumbnails the view asks for.
 func (g gmbd) search(query, scope string, page int) ([]searchResult, int, error) {
+	if isLocalImageQuery(query) {
+		return nil, 0, fmt.Errorf("the gmbd search way can't search by an image; use the sqlite way")
+	}
 	target, err := url.Parse(strings.TrimSuffix(g.url, "/") + "/search")
 	if err != nil {
 		return nil, 0, err

@@ -208,6 +208,72 @@ func TestIndexFromAppCopiesAndSkipsKnownImages(t *testing.T) {
 	}
 }
 
+func TestSQLiteSearchEmbedsQueryImage(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "db.sqlite")
+	if err := ensureSQLiteDB(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageDir := filepath.Join(dir, "Images")
+	vector := make([]float32, sqliteVectorDims)
+	vector[0] = 1
+	if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,
+		"found.png", imageDir, "digest", vectorJSON(vector)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	queryImage := filepath.Join(dir, "query.png")
+	writePNG(t, queryImage, indexColor(2))
+	data, err := os.ReadFile(queryImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var input any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body embedRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("reading the embed request: %v", err)
+		}
+		input = body.Input
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"embeddings":[%s]}`, vectorJSON(vector))
+	}))
+	defer srv.Close()
+
+	a := syncApp(dir)
+	sqliteAt(a, dbPath)
+	a.embedURL = srv.URL
+	a.searchQuery = queryImage
+	a.searchPage = 1
+	a.runSearch()
+
+	if a.searchErr != "" {
+		t.Fatalf("searching by %s failed: %s", queryImage, a.searchErr)
+	}
+	items, ok := input.([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("the query was embedded as %#v, want one image", input)
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("the query image was embedded as %#v, want an image", items[0])
+	}
+	if got, want := item["image"], base64.StdEncoding.EncodeToString(data); got != want {
+		t.Errorf("the query image was embedded as %v, want its base64 bytes", got)
+	}
+	if len(a.searchResults) != 1 || a.searchResults[0].photo.path != filepath.Join(imageDir, "found.png") {
+		t.Errorf("the search found %v, want found.png", a.searchResults)
+	}
+}
+
 func TestSQLiteSearchFindsImages(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "db.sqlite")

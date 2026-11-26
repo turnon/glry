@@ -80,18 +80,48 @@ func (s sqlite) dsn() string {
 }
 
 // search embeds query, asks the SQLite vector table for the nearest images,
-// and returns the page wanted. It runs on a goroutine, so the photos it
-// makes are ready for the thumbnails the view asks for.
+// and returns the page wanted. A query naming a local image is embedded as
+// an image, so the images that look like it come first. It runs on a
+// goroutine, so the photos it makes are ready for the thumbnails the view
+// asks for.
 func (s sqlite) search(query, scope string, page int) ([]searchResult, int, error) {
-	dbPath := s.path
 	if err := s.ensureDB(); err != nil {
 		return nil, 0, err
 	}
-	vector, err := s.embed(query)
+	vector, err := s.queryVector(query)
 	if err != nil {
 		return nil, 0, err
 	}
+	return s.searchVector(vector, scope, page)
+}
 
+// queryVector embeds query: the local image it names, else its text with the
+// prefix the model expects for a search.
+func (s sqlite) queryVector(query string) ([]float32, error) {
+	if !isLocalImageQuery(query) {
+		return s.embed(query)
+	}
+	if s.images == nil {
+		return nil, fmt.Errorf("searching by image needs an embedding service")
+	}
+	data, err := os.ReadFile(query)
+	if err != nil {
+		return nil, fmt.Errorf("reading the query image %s: %w", query, err)
+	}
+	vectors, err := s.images(base64.StdEncoding.EncodeToString(data))
+	if err != nil {
+		return nil, fmt.Errorf("embedding the query image %s: %w", query, err)
+	}
+	if len(vectors) == 0 {
+		return nil, fmt.Errorf("the embedding service returned no embedding for %s", query)
+	}
+	return vectors[0], nil
+}
+
+// searchVector ranks the images nearest vector within scope and returns the
+// page wanted, with how many images the scope holds.
+func (s sqlite) searchVector(vector []float32, scope string, page int) ([]searchResult, int, error) {
+	dbPath := s.path
 	db, err := sql.Open("sqlite", s.dsn())
 	if err != nil {
 		return nil, 0, fmt.Errorf("opening %s: %w", dbPath, err)

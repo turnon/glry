@@ -70,13 +70,54 @@ func (a *app) searchHeader(c *ui.Context) {
 		a.runSearch()
 	}
 	ui.Row(c).FillWidth().Padding(14, 24).Gap(10).AlignItems(ui.Center).Wrap().Children(func() {
-		ui.SearchField(c, &a.searchQuery).Label("Query").
-			Placeholder("Words to look for").Grow(1).MaxWidth(480).
-			OnSubmit(submit)
+		a.queryField(c, submit)
 		a.scopeField(c, submit)
 		a.groupSwitch(c)
 		ui.PrimaryButton(c, "Submit").Tooltip("Run the search").OnClick(submit)
 	})
+}
+
+// queryField is the query input. While the input is empty, it shows a
+// picture icon in place of the clear icon, which picks a local image to
+// search by and fills the query with its path.
+func (a *app) queryField(c *ui.Context, submit func()) {
+	t := c.Theme()
+	ui.Box(c).Grow(1).MaxWidth(480).Children(func() {
+		input := ui.SearchField(c, &a.searchQuery).FillWidth().Label("Query").
+			Placeholder("Words to look for").OnSubmit(submit)
+		if a.searchQuery != "" {
+			return
+		}
+		input.PaddingEnd(t.Space(4))
+		ui.Row(c).Absolute().Top(0).Bottom(0).Right(6).AlignItems(ui.Center).Children(func() {
+			pick := ui.ButtonBase(c).Size(t.Space(4), t.Space(4)).Radius(t.Space(2)).
+				Label("Search by image").Tooltip("Search by a local image").
+				OnClick(func() { a.pickSearchImage(c) })
+			pick.Children(func() {
+				ui.Icon(c, pictureIcon).Size(t.Space(3), t.Space(3)).TextColor(t.TextMuted)
+			})
+		})
+	})
+}
+
+// pickSearchImage asks for a local image and fills the query with its path,
+// which the sqlite way embeds as the query vector when the search runs.
+func (a *app) pickSearchImage(c *ui.Context) {
+	pick := a.pickImage
+	if pick == nil {
+		return
+	}
+	paths, err := pick(a.win)
+	if err != nil {
+		a.searchErr = err.Error()
+		c.Invalidate()
+		return
+	}
+	if len(paths) == 0 {
+		return
+	}
+	a.searchQuery = paths[0]
+	c.Invalidate()
 }
 
 // groupSwitch is the switch that groups the results by their directory,

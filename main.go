@@ -266,6 +266,10 @@ type app struct {
 	// trash moves a path to the trash. Tests replace it, as the real one
 	// needs the running app.
 	trash func(string) error
+
+	// pickImage asks the user for an image to search by, as the native file
+	// dialog does. Tests replace it, as the dialog needs the running app.
+	pickImage func(*mygo.Window) ([]string, error)
 }
 
 func newApp(root string) *app {
@@ -296,6 +300,14 @@ func newApp(root string) *app {
 		sidebarWidth:      250,
 		thumbSlots:        make(chan struct{}, 4),
 		trash:             mygo.Shell.TrashItem,
+		pickImage: func(parent *mygo.Window) ([]string, error) {
+			return mygo.Dialog.Open(mygo.OpenDialogOptions{
+				Parent:  parent,
+				Title:   "Search by image",
+				Message: "Choose an image to find similar ones",
+				Filters: []mygo.FileFilter{{Name: "Images", Extensions: embeddingImageExtensions}},
+			})
+		},
 	}
 	a.setSearcher(d.searchWay)
 	a.setCellSize(d.cell)
