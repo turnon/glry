@@ -125,6 +125,10 @@ func (a *app) singlePhotoBox(c *ui.Context, src ui.ImageSource) {
 	if a.singleDragging {
 		box.Cursor(ui.CursorGrabbing)
 	}
+	if p := a.singlePhoto(); p != nil {
+		path := p.path
+		box.ContextMenu(func(m *ui.Menu) { a.searchPhotoMenuItem(c, m, path) })
+	}
 	box.Children(func() {
 		switch {
 		case src == nil:

@@ -32,15 +32,18 @@ func gmbdAt(a *app, url string) {
 	a.setSearcher(searchWayGmbd)
 }
 
-// pageSearcher serves search pages from a list, and records the pages asked.
+// pageSearcher serves search pages from a list, and records the queries and
+// pages asked.
 type pageSearcher struct {
-	pages [][]string
-	total int
-	asked []int
+	pages   [][]string
+	total   int
+	asked   []int
+	queries []string
 }
 
 func (s *pageSearcher) search(query, scope string, page int) ([]searchResult, int, error) {
 	s.asked = append(s.asked, page)
+	s.queries = append(s.queries, query)
 	var results []searchResult
 	if page >= 1 && page <= len(s.pages) {
 		for _, path := range s.pages[page-1] {
@@ -856,6 +859,112 @@ func TestSearchViewPicksImageAsQuery(t *testing.T) {
 	}
 	if len(a.searchResults) != 1 || a.searchResults[0].photo.path != image {
 		t.Errorf("the picked image found %v, want the search to run on Submit", a.searchResults)
+	}
+}
+
+func TestFolderImageMenuSearchesByImage(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "beach.png")
+	writePNG(t, image, color.RGBA{B: 255, A: 255})
+	searcher := &pageSearcher{pages: [][]string{{image}}, total: 1}
+
+	a := syncApp(root)
+	a.searcher = searcher
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.RightClick("beach.png"); err != nil {
+		t.Fatal(err)
+	}
+	menu := tt.Menu()
+	searchAt, indexAt := slices.Index(menu, "Search"), slices.Index(menu, "Index")
+	if searchAt < 0 {
+		t.Fatalf("the image's menu is %q, want a Search item", menu)
+	}
+	if indexAt < 0 || searchAt > indexAt {
+		t.Errorf("the image's menu is %q, want Search over Index", menu)
+	}
+	if err := tt.ChooseMenuItem("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if a.mode != viewSearch || a.searchQuery != image {
+		t.Errorf("Search opened view %d with query %q, want the search view with %q",
+			a.mode, a.searchQuery, image)
+	}
+	if len(searcher.queries) != 0 {
+		t.Errorf("Search asked for %q, want no search until Submit", searcher.queries)
+	}
+	if err := tt.Click("Submit"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(searcher.queries, []string{image}) {
+		t.Errorf("Submit asked for %q, want the image alone", searcher.queries)
+	}
+	if len(a.searchResults) != 1 || a.searchResults[0].photo.path != image {
+		t.Errorf("the search by %s found %v", image, a.searchResults)
+	}
+}
+
+func TestSearchResultMenuSearchesByImage(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "beach.png")
+	writePNG(t, image, color.RGBA{B: 255, A: 255})
+	searcher := &pageSearcher{pages: [][]string{{image}}, total: 1}
+
+	a := syncApp(root)
+	a.searcher = searcher
+	a.searchQuery = "beach"
+	a.showSearch()
+	a.runSearch()
+	tt := ui.NewTester(a.view, 1000, 640)
+	if err := tt.RightClick("beach.png"); err != nil {
+		t.Fatal(err)
+	}
+	menu := tt.Menu()
+	openAt, searchAt := slices.Index(menu, "Open"), slices.Index(menu, "Search")
+	if searchAt < 0 {
+		t.Fatalf("the result's menu is %q, want a Search item", menu)
+	}
+	if openAt < 0 || searchAt < openAt {
+		t.Errorf("the result's menu is %q, want Search below Open", menu)
+	}
+	if err := tt.ChooseMenuItem("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if a.mode != viewSearch || a.searchQuery != image {
+		t.Errorf("Search opened view %d with query %q, want the search view with %q",
+			a.mode, a.searchQuery, image)
+	}
+	if !slices.Equal(searcher.queries, []string{"beach"}) {
+		t.Errorf("Search asked for %q, want no search until Submit", searcher.queries)
+	}
+}
+
+func TestSingleImageMenuSearchesByImage(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(root, "beach.png")
+	writePNG(t, image, color.RGBA{B: 255, A: 255})
+	searcher := &pageSearcher{pages: [][]string{{image}}, total: 1}
+
+	a := syncApp(root)
+	a.searcher = searcher
+	tt := ui.NewTester(a.view, 1000, 640)
+	openCell(t, tt, "beach.png")
+	if a.mode != viewSingle {
+		t.Fatalf("opening beach.png shows view %d, want the single view", a.mode)
+	}
+	tt.RightClickAt(500, 400)
+	menu := tt.Menu()
+	if !slices.Contains(menu, "Search") {
+		t.Fatalf("the single view's menu is %q, want a Search item", menu)
+	}
+	if err := tt.ChooseMenuItem("Search"); err != nil {
+		t.Fatal(err)
+	}
+	if a.mode != viewSearch || a.searchQuery != image {
+		t.Errorf("Search opened view %d with query %q, want the search view with %q",
+			a.mode, a.searchQuery, image)
+	}
+	if len(searcher.queries) != 0 {
+		t.Errorf("Search asked for %q, want no search until Submit", searcher.queries)
 	}
 }
 

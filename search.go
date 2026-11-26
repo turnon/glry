@@ -27,6 +27,23 @@ func (a *app) showSearch() {
 	a.clearSingle()
 }
 
+// searchByImage opens the search view with path as the query, so that Submit
+// searches the images by the local image's embedding. The image context
+// menus use it.
+func (a *app) searchByImage(c *ui.Context, path string) {
+	a.searchQuery = path
+	a.showSearch()
+	c.Invalidate()
+}
+
+// searchPhotoMenuItem adds the item that searches by path's embedding to an
+// image's context menu.
+func (a *app) searchPhotoMenuItem(c *ui.Context, m *ui.Menu, path string) {
+	if m.Item("Search").Chosen() {
+		a.searchByImage(c, path)
+	}
+}
+
 // searchView searches the folder tree's images and shows the results as a
 // grid that loads more as it nears its end.
 func (a *app) searchView(c *ui.Context) {
@@ -332,6 +349,7 @@ func (a *app) searchResultCell(c *ui.Context, gen uint64, m gridModel, slot, ind
 		if menu.Item("Open").Chosen() {
 			a.openSearchPhotos(c, p.path)
 		}
+		a.searchPhotoMenuItem(c, menu, p.path)
 	})
 }
 

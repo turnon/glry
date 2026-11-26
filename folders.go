@@ -269,6 +269,7 @@ func (a *app) photoCell(c *ui.Context, m gridModel, i int, p *photo) {
 	})
 	cell.ContextMenu(func(m *ui.Menu) {
 		a.openPhotoMenuItem(c, m, p.path)
+		a.searchPhotoMenuItem(c, m, p.path)
 		a.indexGridMenuItem(m, p.path, false)
 		a.removeGridMenuItem(c, m, p.path, false)
 	})
