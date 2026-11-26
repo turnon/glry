@@ -351,6 +351,86 @@ func TestSingleViewOpensPhoto(t *testing.T) {
 	}
 }
 
+// The single image view's footer tells where the photo is in its folder,
+// below it rather than over it, and follows the arrows.
+func TestSingleViewFooterTellsImagePlace(t *testing.T) {
+	root := t.TempDir()
+	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})
+	writePNG(t, filepath.Join(root, "beta.png"), color.RGBA{G: 255, A: 255})
+	writePNG(t, filepath.Join(root, "gamma.png"), color.RGBA{B: 255, A: 255})
+	a := syncApp(root)
+	tt := ui.NewTester(a.view, 1000, 640)
+
+	openCell(t, tt, "beta.png")
+	tt.Frame()
+	p := a.singlePhoto()
+	want := fmt.Sprintf("2/3  %dx%d  %s  %s", p.width, p.height, byteSize(p.size), p.name)
+	footer, ok := tt.Find(want)
+	if !ok {
+		t.Fatalf("the view does not tell beta.png's path, dimensions, size and place: %q", tt.Texts())
+	}
+	if footer.Y < 500 {
+		t.Errorf("the image's details are at %v, want the view's bottom", footer)
+	}
+
+	tt.Key(0, ui.KeyRight)
+	tt.Frame()
+	if !tt.HasText("3/3") {
+		t.Errorf("the right arrow does not tell gamma.png's place: %q", tt.Texts())
+	}
+	tt.Key(0, ui.KeyLeft)
+	tt.Key(0, ui.KeyLeft)
+	tt.Frame()
+	if !tt.HasText("1/3") {
+		t.Errorf("the left arrows do not tell alpha.png's place: %q", tt.Texts())
+	}
+}
+
+// The single image view's footer counts the photo among its own folder's
+// images, not among the search results the view steps through.
+func TestSingleViewFooterCountsItsOwnFolder(t *testing.T) {
+	root := t.TempDir()
+	trips := filepath.Join(root, "Trips")
+	if err := os.Mkdir(trips, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alpha := filepath.Join(root, "alpha.png")
+	beach, sunset := filepath.Join(trips, "beach.png"), filepath.Join(trips, "sunset.png")
+	writePNG(t, alpha, color.RGBA{R: 255, A: 255})
+	writePNG(t, beach, color.RGBA{B: 255, A: 255})
+	writePNG(t, sunset, color.RGBA{G: 255, A: 255})
+
+	a := syncApp(root)
+	a.mode = viewSearch
+	a.searchResults = []searchResult{
+		{photo: &photo{path: sunset, name: "sunset.png"}},
+		{photo: &photo{path: alpha, name: "alpha.png"}},
+		{photo: &photo{path: beach, name: "beach.png"}},
+	}
+	a.searchTotal = 3
+	a.searchPick = gridPick{pivot: -1, handles: make([]ui.Handle, 3)}
+	tt := ui.NewTester(a.view, 1000, 640)
+	tt.Frame()
+
+	openCell(t, tt, "sunset.png")
+	tt.Frame()
+	if !tt.HasText("2/2") {
+		t.Errorf("the view does not count sunset.png in Trips: %q", tt.Texts())
+	}
+
+	tt.Key(0, ui.KeyRight)
+	tt.Frame()
+	if !tt.HasText("1/1") {
+		t.Errorf("the view does not count alpha.png in the root folder: %q", tt.Texts())
+	}
+
+	tt.Key(0, ui.KeyRight)
+	tt.Frame()
+	if !tt.HasText("1/2") {
+		t.Errorf("the view does not count beach.png in Trips: %q", tt.Texts())
+	}
+}
+
 func TestTagsSurviveOpeningAnotherFolder(t *testing.T) {
 	root := t.TempDir()
 	trips := filepath.Join(root, "Trips")

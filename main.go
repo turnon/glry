@@ -158,6 +158,14 @@ type app struct {
 	singleDragging bool
 	singleFrom     ui.Point
 
+	// singleDirPhotos is the images of the directory the single image
+	// view's photo is in, for its footer; singleDir names that directory
+	// and singleDirGen tells the scan of a directory left meanwhile to
+	// drop.
+	singleDir       string
+	singleDirPhotos []*photo
+	singleDirGen    uint64
+
 	// history is the path of each photo the single image view's header
 	// tags, in the order they opened, and tag is the index of the tag the
 	// view is on. The arrows rename that tag instead of adding one, so two

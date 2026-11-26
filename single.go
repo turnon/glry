@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"log"
 	"os"
@@ -42,27 +43,30 @@ func (a *app) singleView(c *ui.Context) {
 		switch {
 		case p == nil && len(a.history) == 0:
 			a.gridMessage(c, "No image opened", "Double-click an image in the folders view, or choose Open from its menu.", false)
-			return
 		case p == nil:
 			a.gridMessage(c, "No images in this folder", "Choose a folder with images in the file tree.", false)
-			return
 		case a.singleErr != nil:
 			ui.Column(c).Fill().Center().Gap(8).Children(func() {
 				ui.Icon(c, pictureIcon).Size(42, 42).TextColor(t.TextMuted)
 				ui.Text(c, "Can't open this image").TextColor(t.TextMuted)
 				ui.Text(c, a.singleErr.Error()).FontSize(12).TextColor(t.TextMuted)
 			})
-			return
+		default:
+			src := a.singleSource()
+			// Grow takes the room the header leaves, so that the photo's
+			// box ends inside the window rather than past it, where its
+			// scroll bars would not show. The padding leaves a margin of the
+			// viewer's background around it, which the tag showing runs
+			// into below the header.
+			ui.Column(c).Grow(1).MinHeight(0).Center().Padding(2).Children(func() {
+				a.singlePhotoBox(c, src)
+			})
 		}
-		src := a.singleSource()
-		// Grow takes the room the header leaves, so that the photo's
-		// box ends inside the window rather than past it, where its
-		// scroll bars would not show. The padding leaves a margin of the
-		// viewer's background around it, which the tag showing runs
-		// into below the header.
-		ui.Column(c).Grow(1).MinHeight(0).Center().Padding(2).Children(func() {
-			a.singlePhotoBox(c, src)
-		})
+		if p != nil {
+			if info := a.singleInfo(); info != "" {
+				a.singleFooter(c, info)
+			}
+		}
 	})
 	if p != nil {
 		c.OnWindowShortcut(0, ui.KeyLeft, func() { a.stepSingle(-1) })
@@ -84,6 +88,75 @@ func (a *app) singleSource() ui.ImageSource {
 		return a.singleImg
 	}
 	return p.img
+}
+
+// singleInfo names the photo the single image view shows: where it is in
+// its directory, its dimensions, its file size, and its name, as
+// "3/12  1920x1080  2.1 MB  beach.jpg". The selected folder's images
+// already loaded tell the place; another directory is scanned once, and
+// the footer shows once it arrives.
+func (a *app) singleInfo() string {
+	p := a.singlePhoto()
+	if p == nil {
+		return ""
+	}
+	dir := filepath.Dir(p.path)
+	photos := a.photos
+	if dir != a.selected {
+		a.loadSingleDir(dir)
+		photos = a.singleDirPhotos
+	}
+	i := photoIndex(photos, p.path)
+	if i < 0 {
+		return ""
+	}
+	dimensions := "—x—"
+	if p.width > 0 && p.height > 0 {
+		dimensions = fmt.Sprintf("%dx%d", p.width, p.height)
+	}
+	name := p.name
+	if name == "" {
+		name = filepath.Base(p.path)
+	}
+	return fmt.Sprintf("%d/%d  %s  %s  %s", i+1, len(photos), dimensions, byteSize(p.size), name)
+}
+
+// singleFooter shows the photo's path, dimensions, size and place along the
+// view's bottom, in the layout rather than over the photo.
+func (a *app) singleFooter(c *ui.Context, info string) {
+	t := c.Theme()
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Padding(3, 8).
+		Background(t.Surface).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).
+		Children(func() {
+			ui.Text(c, info).FontSize(12).TextColor(t.TextMuted).SingleLine().
+				Shrink(1).MinWidth(0)
+		})
+}
+
+// loadSingleDir caches the images of dir for the single image view's
+// footer, scanning it on a goroutine when another directory's images are
+// cached.
+func (a *app) loadSingleDir(dir string) {
+	if dir == a.singleDir {
+		return
+	}
+	a.singleDir = dir
+	a.singleDirPhotos = nil
+	a.singleDirGen++
+	gen := a.singleDirGen
+	a.async(func() {
+		photos, err := scanImages(dir)
+		if err != nil {
+			log.Printf("reading %s: %v", dir, err)
+			return
+		}
+		a.post(func() {
+			if gen != a.singleDirGen {
+				return // another directory's images were asked meanwhile
+			}
+			a.singleDirPhotos = photos
+		})
+	})
 }
 
 // tagView is how the single image view showed the photo of one history

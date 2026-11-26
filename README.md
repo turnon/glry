@@ -7,7 +7,7 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `main.go` — app state and startup: the rail and view switching, tree scanning, folder loading, thumbnails, and the window.
 - `folders.go` — the folders view: the sidebar's outline rows and the selected folder's grid of folder and photo cells, with their selection, the image count tag, and an image's Search, Index and Remove menu items.
 - `select.go` — choosing several items in the folders and search grids: Cmd-click, Shift-click, and dragging a rectangle over them.
-- `single.go` — the single-image view: opening photos, zoom, pan, the history tags with their kept views, and the image's Search menu item.
+- `single.go` — the single-image view: opening photos, zoom, pan, the history tags with their kept views, the footer naming the image's place in its folder, dimensions, size and name, and the image's Search menu item.
 - `search.go` — the search view: query/scope header with the picture icon that picks a local image as the query, the results grid that loads more as it nears its end, its images' Open and Search menu items, and opening its chosen images.
 - `search_group.go` — the search view's grouped results: a row of one directory's images, ordered by score, that loads a batch as it scrolls sideways.
 - `search_gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`; it searches text only, so image queries report why.
