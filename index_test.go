@@ -34,7 +34,7 @@ func TestIndexFromAppFolderTreeMenu(t *testing.T) {
 	dbPath := filepath.Join(dir, "db.sqlite")
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.RightClick("Trips"); err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestIndexFromAppGalleryImageMenu(t *testing.T) {
 	dbPath := filepath.Join(dir, "db.sqlite")
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.RightClick("beach.png"); err != nil {
 		t.Fatal(err)

@@ -93,7 +93,7 @@ func TestIndexAppliesToTheChosenImages(t *testing.T) {
 	dbPath := filepath.Join(root, "db.sqlite")
 	a := syncApp(root)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	tt := ui.NewTester(a.view, 1000, 640)
 	for _, name := range []string{"alpha.png", "beach.png"} {
 		if err := tt.ClickWith(ui.Cmd, name); err != nil {
@@ -132,7 +132,7 @@ func TestIndexMenuOfAnUnchosenImageIndexesItAlone(t *testing.T) {
 	dbPath := filepath.Join(root, "db.sqlite")
 	a := syncApp(root)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	tt := ui.NewTester(a.view, 1000, 640)
 	if err := tt.ClickWith(ui.Cmd, "alpha.png"); err != nil {
 		t.Fatal(err)

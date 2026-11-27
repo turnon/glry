@@ -462,7 +462,7 @@ type searcher interface {
 func (a *app) setSearcher(way searchWay) {
 	a.searchScoreAsc = way == searchWaySQLite
 	if way == searchWaySQLite {
-		a.searcher = sqlite{path: a.sqlitePath, embed: a.query, images: a.images, onError: a.indexFailed}
+		a.searcher = sqlite{path: a.sqlitePath, embedQuery: a.embed.Query, embedImages: a.embed.Images, onError: a.indexFailed}
 		return
 	}
 	a.searcher = gmbd{url: a.gmbdURL}

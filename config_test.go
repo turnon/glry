@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/embedding"
 )
 
 func TestLoadConfigCreatesDefaultFile(t *testing.T) {
@@ -15,7 +16,7 @@ func TestLoadConfigCreatesDefaultFile(t *testing.T) {
 	if settings.cell != defaultCellSize() {
 		t.Errorf("loaded %+v, want defaults %+v", settings.cell, defaultCellSize())
 	}
-	if settings.searchWay != searchWayGmbd || settings.embedURL != defaultEmbedURL || settings.embedModel != defaultEmbedModel {
+	if settings.searchWay != searchWayGmbd || settings.embed != embedding.DefaultEmbedConfig() {
 		t.Errorf("loaded search settings %+v, want gmbd defaults", settings)
 	}
 	data, err := os.ReadFile(path)
@@ -29,7 +30,7 @@ func TestLoadConfigCreatesDefaultFile(t *testing.T) {
 	if cfg.Cell.Height != "176px" || cfg.Cell.Width != "176px" {
 		t.Errorf("default config is %+v", cfg)
 	}
-	if cfg.Search.Way != "gmbd" || cfg.Embed.URL != defaultEmbedURL || cfg.Embed.Model != defaultEmbedModel {
+	if cfg.Search.Way != "gmbd" || cfg.Embed != embedding.DefaultEmbedConfig() {
 		t.Errorf("default config search is %+v / %+v", cfg.Search, cfg.Embed)
 	}
 }
@@ -85,8 +86,8 @@ func TestLoadConfigReadsSearchWay(t *testing.T) {
 	if settings.searchWay != searchWaySQLite {
 		t.Errorf("search way is %q, want sqlite", settings.searchWay)
 	}
-	if settings.embedURL != "http://example.test/embed" || settings.embedModel != "m" {
-		t.Errorf("embed settings are %q/%q", settings.embedURL, settings.embedModel)
+	if settings.embed.URL != "http://example.test/embed" || settings.embed.Model != "m" {
+		t.Errorf("embed settings are %q/%q", settings.embed.URL, settings.embed.Model)
 	}
 }
 
@@ -115,13 +116,13 @@ func TestSaveConfigAppliesSearchWay(t *testing.T) {
 	a.config = configFile{
 		Cell:   cellConfig{Height: "20px", Width: "15px"},
 		Search: searchConfig{Way: "sqlite"},
-		Embed:  embedConfig{URL: "http://example.test/embed", Model: "m"},
+		Embed:  embedding.EmbedConfig{URL: "http://example.test/embed", Model: "m"},
 	}
 	a.saveConfig()
 	if a.configErr != "" {
 		t.Fatalf("saving the config failed: %s", a.configErr)
 	}
-	if _, ok := a.searcher.(sqlite); !ok || a.embedURL != "http://example.test/embed" || a.embedModel != "m" {
+	if _, ok := a.searcher.(sqlite); !ok || a.embed.URL() != "http://example.test/embed" || a.embed.Model() != "m" {
 		t.Errorf("the config applied %+v", a.searcher)
 	}
 	if a.cellWidth != 15 || a.cellHeight != 20 {

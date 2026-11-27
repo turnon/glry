@@ -10,6 +10,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/embedding"
 )
 
 var (
@@ -182,19 +183,21 @@ type app struct {
 
 	// searcher is the backend the search view asks: gmbd's HTTP service or
 	// the SQLite vector database. gmbdURL is that service's address, and
-	// sqlitePath the database, with embedURL/embedModel the service that
-	// embeds a query for the sqlite way. searchQuery and searchScope are its
+	// sqlitePath the database. searchQuery and searchScope are the search's
 	// inputs, and searchPage the page it asks next. searchResults is what the
 	// search has found so far, with searchTotal how many it counted in all,
 	// and searchGen tells the answer of a search run meanwhile to drop.
 	// searchingMore and searchedNoMore tell that another page is on its
 	// way and that the backend has no more. searchScroll keeps the results'
 	// place, and searchGrid and searchChosen are the grid and its choice.
-	searcher       searcher
-	gmbdURL        string
-	sqlitePath     string
-	embedURL       string
-	embedModel     string
+	searcher   searcher
+	gmbdURL    string
+	sqlitePath string
+
+	// embed is the service that embeds a search query or the images the
+	// sqlite way indexes.
+	embed embedding.Embedding
+
 	searchQuery    string
 	searchScope    string
 	searchPage     int
@@ -298,8 +301,7 @@ func newApp(root string) *app {
 		tagShown:          -1,
 		gmbdURL:           gmbdEndpoint,
 		sqlitePath:        defaultSQLitePath(),
-		embedURL:          d.embedURL,
-		embedModel:        d.embedModel,
+		embed:             embedding.Default(),
 		searchPage:        1,
 		searchLaid:        -1,
 		searchChosen:      -1,

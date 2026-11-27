@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/embedding"
 )
 
 const (
@@ -41,20 +42,18 @@ func parseSearchWay(s string) (searchWay, error) {
 }
 
 // settings is what the config file holds, once read: the size of a grid
-// cell and how the search view finds images.
+// cell, how the search view finds images, and the embedding service.
 type settings struct {
-	cell       cellSize
-	searchWay  searchWay
-	embedURL   string
-	embedModel string
+	cell      cellSize
+	searchWay searchWay
+	embed     embedding.EmbedConfig
 }
 
 func defaultSettings() settings {
 	return settings{
-		cell:       defaultCellSize(),
-		searchWay:  searchWayGmbd,
-		embedURL:   defaultEmbedURL,
-		embedModel: defaultEmbedModel,
+		cell:      defaultCellSize(),
+		searchWay: searchWayGmbd,
+		embed:     embedding.DefaultEmbedConfig(),
 	}
 }
 
@@ -71,9 +70,9 @@ func defaultCellSize() cellSize {
 // {"cell": {"height": "176px", "width": "176px"}}, and embed sits beside
 // cell and search.
 type configFile struct {
-	Cell   cellConfig   `json:"cell"`
-	Search searchConfig `json:"search"`
-	Embed  embedConfig  `json:"embed"`
+	Cell   cellConfig            `json:"cell"`
+	Search searchConfig          `json:"search"`
+	Embed  embedding.EmbedConfig `json:"embed"`
 }
 
 type cellConfig struct {
@@ -88,11 +87,6 @@ type searchConfig struct {
 	Way string `json:"way"`
 }
 
-type embedConfig struct {
-	URL   string `json:"url"`
-	Model string `json:"model"`
-}
-
 func defaultConfigFile() configFile {
 	return configFile{
 		Cell: cellConfig{
@@ -100,7 +94,7 @@ func defaultConfigFile() configFile {
 			Width:  fmt.Sprintf("%dpx", defaultCellWidth),
 		},
 		Search: searchConfig{Way: string(searchWayGmbd)},
-		Embed:  embedConfig{URL: defaultEmbedURL, Model: defaultEmbedModel},
+		Embed:  embedding.DefaultEmbedConfig(),
 	}
 }
 
@@ -166,10 +160,10 @@ func loadConfig(path string) settings {
 		}
 	}
 	if cfg.Embed.URL != "" {
-		s.embedURL = strings.TrimSpace(cfg.Embed.URL)
+		s.embed.URL = strings.TrimSpace(cfg.Embed.URL)
 	}
 	if cfg.Embed.Model != "" {
-		s.embedModel = strings.TrimSpace(cfg.Embed.Model)
+		s.embed.Model = strings.TrimSpace(cfg.Embed.Model)
 	}
 	return s
 }
@@ -221,15 +215,14 @@ func (a *app) loadSettings(path string) {
 	s := loadConfig(path)
 	a.setCellSize(s.cell)
 	a.setSearcher(s.searchWay)
-	a.embedURL = s.embedURL
-	a.embedModel = s.embedModel
+	a.embed.SetConfig(s.embed)
 	a.config = configFile{
 		Cell: cellConfig{
 			Width:  formatPixels(s.cell.width),
 			Height: formatPixels(s.cell.height),
 		},
 		Search: searchConfig{Way: string(s.searchWay)},
-		Embed:  embedConfig{URL: s.embedURL, Model: s.embedModel},
+		Embed:  a.embed.Config(),
 	}
 	a.configErr = ""
 	if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) > 0 && !json.Valid(data) {
@@ -262,6 +255,7 @@ func configSection(c *ui.Context, title string, fn func()) {
 // config.json's cell, search and embed objects.
 func (a *app) configView(c *ui.Context) {
 	t := c.Theme()
+	embedDefaults := embedding.DefaultEmbedConfig()
 	edited := func() {
 		a.configErr = ""
 		a.configStatus = ""
@@ -285,10 +279,10 @@ func (a *app) configView(c *ui.Context) {
 				})
 				configSection(c, "Embedding", func() {
 					ui.Field(c, "URL", func() {
-						ui.TextInput(c, &a.config.Embed.URL).Placeholder(defaultEmbedURL).FillWidth().MaxWidth(300).OnChange(edited)
+						ui.TextInput(c, &a.config.Embed.URL).Placeholder(embedDefaults.URL).FillWidth().MaxWidth(300).OnChange(edited)
 					})
 					ui.Field(c, "Model", func() {
-						ui.TextInput(c, &a.config.Embed.Model).Placeholder(defaultEmbedModel).FillWidth().MaxWidth(400).OnChange(edited)
+						ui.TextInput(c, &a.config.Embed.Model).Placeholder(embedDefaults.Model).FillWidth().MaxWidth(400).OnChange(edited)
 					})
 				})
 			}).FillWidth()
@@ -336,14 +330,7 @@ func (a *app) saveConfig() {
 		a.configErr = "search.way: " + err.Error()
 		return
 	}
-	embedURL := strings.TrimSpace(a.config.Embed.URL)
-	if embedURL == "" {
-		embedURL = defaultEmbedURL
-	}
-	embedModel := strings.TrimSpace(a.config.Embed.Model)
-	if embedModel == "" {
-		embedModel = defaultEmbedModel
-	}
+	a.embed.SetConfig(a.config.Embed)
 
 	cfg := configFile{
 		Cell: cellConfig{
@@ -351,13 +338,11 @@ func (a *app) saveConfig() {
 			Height: formatPixels(height),
 		},
 		Search: searchConfig{Way: string(way)},
-		Embed:  embedConfig{URL: embedURL, Model: embedModel},
+		Embed:  a.embed.Config(),
 	}
 	a.config = cfg
 	a.setCellSize(cellSize{width: width, height: height})
 	a.setSearcher(way)
-	a.embedURL = embedURL
-	a.embedModel = embedModel
 	if a.configPath == "" {
 		a.configStatus = "Applied."
 		return

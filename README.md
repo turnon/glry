@@ -12,7 +12,7 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `search_group.go` — the search view's grouped results: a row of one directory's images, ordered by score, that loads a batch as it scrolls sideways.
 - `search_gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`; it searches text only, so image queries report why.
 - `search_sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, embedding a query image when the query is a local image, and indexing folders or images into it or removing them from it.
-- `embedding.go` — the embedding service: query text and base64 images in, vectors out.
+- `embedding/embedding.go` — the `embedding` package: the embedding service, query text and base64 images in, vectors out, with its address and model.
 - `index.go` — indexing progress and the `Index` and `Index Recursively` context menu items of folders and images.
 - `remove.go` — the `Remove` context menu item: moving folders and images to the trash, taking them out of the index, and refreshing the folders view.
 - `config.go` — `~/.glry/config.json`: cell-size, search, and embedding settings, plus the config view's form.

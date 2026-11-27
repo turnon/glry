@@ -17,6 +17,14 @@ import (
 	"time"
 )
 
+// embedRequest is the body the app posts to the embedding service, for
+// these tests to read.
+type embedRequest struct {
+	Model      string `json:"model"`
+	Input      any    `json:"input"`
+	Dimensions int    `json:"dimensions,omitempty"`
+}
+
 // ensureSQLiteDB creates an empty images table at path, as the sqlite tests
 // fill it.
 func ensureSQLiteDB(path string) error {
@@ -86,7 +94,7 @@ func TestIndexFromAppEmbedsFolderRecursively(t *testing.T) {
 	dbPath := filepath.Join(dir, "db.sqlite")
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.startIndex(dir, true)
 
 	if a.indexErr != "" {
@@ -163,7 +171,7 @@ func TestIndexFromAppCopiesAndSkipsKnownImages(t *testing.T) {
 	dbPath := filepath.Join(dir, "db.sqlite")
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.startIndex(aDir, true)
 	a.startIndex(bDir, true)
 	if requests != 1 || images != 1 {
@@ -250,7 +258,7 @@ func TestSQLiteSearchEmbedsQueryImage(t *testing.T) {
 
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.searchQuery = queryImage
 	a.searchPage = 1
 	a.runSearch()
@@ -318,15 +326,15 @@ func TestSQLiteSearchFindsImages(t *testing.T) {
 
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
-	a.embedModel = "test-embed"
+	a.embed.SetURL(srv.URL)
+	a.embed.SetModel("test-embed")
 	a.searchQuery = "red car"
 	a.searchScope = ""
 	a.searchPage = 1
 	a.runSearch()
 
 	if got.model != "test-embed" || got.dimensions != sqliteVectorDims ||
-		got.input != queryEmbeddingPrefix+"red car" {
+		got.input != "task: search result | query: red car" {
 		t.Errorf("the query was embedded as %+v", got)
 	}
 	if len(a.searchResults) != searchPageSize {
@@ -387,7 +395,7 @@ func TestSQLiteSearchFiltersScopeInSQL(t *testing.T) {
 
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.searchQuery = "anything"
 	a.searchScope = bDir
 	a.searchPage = 1
@@ -469,7 +477,7 @@ func TestSQLiteSearchScopePastKNearest(t *testing.T) {
 
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.searchQuery = "anything"
 	a.searchScope = bDir
 	a.searchPage = 1
@@ -540,7 +548,7 @@ func TestSQLiteSearchWideScopePastKNearest(t *testing.T) {
 
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.searchQuery = "anything"
 	a.searchScope = "Album"
 	a.searchPage = 1
@@ -586,7 +594,7 @@ func TestSQLiteSearchScopeMatchesNothing(t *testing.T) {
 
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.searchQuery = "anything"
 	a.searchScope = "no such folder"
 	a.searchPage = 1
@@ -642,12 +650,12 @@ func TestSQLiteIndexAndSearchAtOnce(t *testing.T) {
 	indexErr := make(chan error, 1)
 	s := sqlite{
 		path: filepath.Join(dir, "db.sqlite"),
-		embed: func(string) ([]float32, error) {
+		embedQuery: func(string) ([]float32, error) {
 			vector := make([]float32, sqliteVectorDims)
 			vector[0] = 1
 			return vector, nil
 		},
-		images: func(encoded ...string) ([][]float32, error) {
+		embedImages: func(encoded ...string) ([][]float32, error) {
 			// Keep the index going long enough for searches to overlap it.
 			time.Sleep(20 * time.Millisecond)
 			vectors := make([][]float32, len(encoded))
@@ -755,7 +763,7 @@ func TestIndexSkipsFormatsEmbeddingCannotRead(t *testing.T) {
 	dbPath := filepath.Join(dir, "db.sqlite")
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.startIndex(dir, true)
 
 	if a.indexErr != "" {
@@ -804,7 +812,7 @@ func TestIndexSplitsFailedEmbeddingBatches(t *testing.T) {
 	var calls []int
 	s := sqlite{
 		path: filepath.Join(dir, "db.sqlite"),
-		images: func(encoded ...string) ([][]float32, error) {
+		embedImages: func(encoded ...string) ([][]float32, error) {
 			calls = append(calls, len(encoded))
 			if len(encoded) > 1 {
 				return nil, fmt.Errorf("the service refuses batches")
@@ -853,7 +861,7 @@ func TestIndexSkipsImageWhoseEmbeddingFails(t *testing.T) {
 	failNext := true
 	s := sqlite{
 		path: filepath.Join(dir, "db.sqlite"),
-		images: func(encoded ...string) ([][]float32, error) {
+		embedImages: func(encoded ...string) ([][]float32, error) {
 			if len(encoded) > 1 {
 				return nil, fmt.Errorf("the service refuses batches")
 			}
@@ -916,7 +924,7 @@ func TestIndexFolderReachesNestedFoldersOnlyWhenRecursive(t *testing.T) {
 	dbPath := filepath.Join(dir, "db.sqlite")
 	a := syncApp(dir)
 	sqliteAt(a, dbPath)
-	a.embedURL = srv.URL
+	a.embed.SetURL(srv.URL)
 	a.startIndex(dir, false)
 	if a.indexErr != "" {
 		t.Fatalf("indexing failed: %s", a.indexErr)

@@ -23,7 +23,8 @@ import (
 // them with sqlite-vec. A query is embedded by the service configured in
 // embed, then matched against the stored vectors.
 const (
-	// sqliteVectorDims is the width of the images.vector column.
+	// sqliteVectorDims is the width of the images.vector column, the width
+	// the embedding service returns.
 	sqliteVectorDims = 768
 	// sqliteMaxK is the largest k a vec0 KNN query accepts, and so the
 	// furthest a page can reach.
@@ -40,14 +41,14 @@ const (
 // sqliteSchema creates the images table on a new database. The id column
 // auto-increments, so an indexer can insert name, dir, digest and vector
 // alone.
-const sqliteSchema = `
+var sqliteSchema = fmt.Sprintf(`
 create virtual table if not exists images using vec0(
 	id integer primary key,
 	name text,
 	dir text,
 	digest text,
-	vector float[768]
-)`
+	vector float[%d]
+)`, sqliteVectorDims)
 
 // sqlite is the sqlite search way: it keeps image embeddings in path and
 // ranks them with sqlite-vec.
@@ -55,10 +56,10 @@ type sqlite struct {
 	// path is the database, embed embeds a query for the vector table, and
 	// images embeds an image for indexing. onError reports why an index
 	// stopped, for a view to show.
-	path    string
-	embed   func(string) ([]float32, error)
-	images  func(...string) ([][]float32, error)
-	onError func(error)
+	path        string
+	embedQuery  func(string) ([]float32, error)
+	embedImages func(...string) ([][]float32, error)
+	onError     func(error)
 }
 
 // defaultSQLitePath is ~/.glry/db.sqlite.
@@ -99,16 +100,16 @@ func (s sqlite) search(query, scope string, page int) ([]searchResult, int, erro
 // prefix the model expects for a search.
 func (s sqlite) queryVector(query string) ([]float32, error) {
 	if !isLocalImageQuery(query) {
-		return s.embed(query)
+		return s.embedQuery(query)
 	}
-	if s.images == nil {
+	if s.embedImages == nil {
 		return nil, fmt.Errorf("searching by image needs an embedding service")
 	}
 	data, err := os.ReadFile(query)
 	if err != nil {
 		return nil, fmt.Errorf("reading the query image %s: %w", query, err)
 	}
-	vectors, err := s.images(base64.StdEncoding.EncodeToString(data))
+	vectors, err := s.embedImages(base64.StdEncoding.EncodeToString(data))
 	if err != nil {
 		return nil, fmt.Errorf("embedding the query image %s: %w", query, err)
 	}
@@ -385,7 +386,7 @@ func (s sqlite) index(path string, recursive bool) (chan indexProgress, error) {
 	if !info.IsDir() && !isEmbeddingImageName(path) {
 		return nil, fmt.Errorf("%s is not an image the embedding service reads", path)
 	}
-	if s.images == nil {
+	if s.embedImages == nil {
 		return nil, fmt.Errorf("indexing needs an embedding service")
 	}
 	if err := s.ensureDB(); err != nil {
@@ -531,7 +532,7 @@ func (s sqlite) indexFiles(db *sql.DB, paths []string, progress chan<- indexProg
 		for i, image := range images {
 			input[i] = base64.StdEncoding.EncodeToString(image.data)
 		}
-		embedded, err := s.images(input...)
+		embedded, err := s.embedImages(input...)
 		if err != nil {
 			if len(images) == 1 {
 				log.Printf("skipping %s: %v", images[0].path, err)
