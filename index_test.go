@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/searcher"
 )
 
 // indexColor gives each image a distinct color, so that tests can tell them
@@ -121,12 +122,12 @@ type queueIndexSearcher struct {
 	finish  chan struct{}
 }
 
-func (s *queueIndexSearcher) search(query, scope string, page int) ([]searchResult, int, error) {
+func (s *queueIndexSearcher) Search(query, scope string, page int) ([]searcher.Result, int, error) {
 	return nil, 0, nil
 }
 
-func (s *queueIndexSearcher) index(path string, recursive bool) (chan indexProgress, error) {
-	progress := make(chan indexProgress)
+func (s *queueIndexSearcher) Index(path string, recursive bool) (chan searcher.Progress, error) {
+	progress := make(chan searcher.Progress)
 	s.started <- indexTarget{path: path, recursive: recursive}
 	go func() {
 		<-s.finish
@@ -135,7 +136,7 @@ func (s *queueIndexSearcher) index(path string, recursive bool) (chan indexProgr
 	return progress, nil
 }
 
-func (s *queueIndexSearcher) remove(path string) error { return nil }
+func (s *queueIndexSearcher) Remove(path string) error { return nil }
 
 // galleryRightClick right-clicks the folders view's cell named name, not
 // the tree row that shows the same folder.

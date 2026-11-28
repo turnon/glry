@@ -3,14 +3,21 @@ package main
 import (
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/searcher"
 )
 
 // searchPageSize is how many images a search page holds; the grid asks
 // for the next page as it nears the end of the results it has.
-const searchPageSize = 20
+const searchPageSize = searcher.PageSize
+
+// defaultSQLitePath is ~/.glry/db.sqlite.
+func defaultSQLitePath() string {
+	return filepath.Join(glryDir(), "db.sqlite")
+}
 
 // searchResult is one image the search service found, with its score.
 type searchResult struct {
@@ -443,29 +450,36 @@ func (a *app) openSearchResult(c *ui.Context) {
 	c.Invalidate()
 }
 
-// indexProgress says how far an index got: how many images it has handled,
-// how many it has to handle, and how many of them it left out of the index.
-type indexProgress struct {
-	done, total, skipped int
-}
-
-// searcher is a search way: it finds the images matching a query within a
-// scope, one page at a time, indexes the images at a path, those under a
-// folder too when recursive, and removes a path from its index.
-type searcher interface {
-	search(query, scope string, page int) ([]searchResult, int, error)
-	index(path string, recursive bool) (chan indexProgress, error)
-	remove(path string) error
+// asSearchResults is what the backend found as the view shows it: each
+// result with a photo to load its thumbnail into.
+func asSearchResults(results []searcher.Result) []searchResult {
+	found := make([]searchResult, 0, len(results))
+	for _, result := range results {
+		found = append(found, searchResult{
+			photo: &photo{
+				path: result.Path,
+				name: filepath.Base(result.Path),
+				size: result.Size,
+			},
+			score: result.Score,
+		})
+	}
+	return found
 }
 
 // setSearcher chooses the backend the search asks, from the configured way.
 func (a *app) setSearcher(way searchWay) {
 	a.searchScoreAsc = way == searchWaySQLite
 	if way == searchWaySQLite {
-		a.searcher = sqlite{path: a.sqlitePath, embedQuery: a.embed.Query, embedImages: a.embed.Images, onError: a.indexFailed}
+		a.searcher = searcher.SQLite{
+			Path:        a.sqlitePath,
+			EmbedQuery:  a.embed.Query,
+			EmbedImages: a.embed.Images,
+			OnError:     a.indexFailed,
+		}
 		return
 	}
-	a.searcher = gmbd{url: a.gmbdURL}
+	a.searcher = searcher.Gmbd{URL: a.gmbdURL}
 }
 
 // runSearch asks the chosen backend for the images matching the query
@@ -510,7 +524,7 @@ func (a *app) runSearch() {
 	a.searchPick = gridPick{pivot: -1}
 	a.resetSearchGroups()
 	a.async(func() {
-		results, total, err := a.searcher.search(query, scope, page)
+		results, total, err := a.searcher.Search(query, scope, page)
 		a.post(func() {
 			if gen != a.searchGen {
 				return // another search ran meanwhile
@@ -520,7 +534,7 @@ func (a *app) runSearch() {
 				a.searchErr = err.Error()
 				return
 			}
-			a.searchResults = results
+			a.searchResults = asSearchResults(results)
 			a.searchTotal = total
 			a.searchedNoMore = len(results) == 0 || len(results) >= total
 			a.searchPick.handles = make([]ui.Handle, len(results))
@@ -548,7 +562,7 @@ func (a *app) loadMoreSearch() {
 	gen := a.searchGen
 	a.searchingMore = true
 	a.async(func() {
-		results, total, err := a.searcher.search(query, scope, page)
+		results, total, err := a.searcher.Search(query, scope, page)
 		log.Printf("loading page: %v", page)
 		a.post(func() {
 			if gen != a.searchGen {
@@ -565,7 +579,7 @@ func (a *app) loadMoreSearch() {
 				a.searchTotal = total
 			}
 			before := len(a.searchResults)
-			a.searchResults = append(a.searchResults, results...)
+			a.searchResults = append(a.searchResults, asSearchResults(results)...)
 			a.searchPick.handles = append(a.searchPick.handles, make([]ui.Handle, len(results))...)
 			if a.searchGroup {
 				a.rebuildSearchGroups()

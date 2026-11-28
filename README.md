@@ -10,21 +10,15 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `single.go` — the single-image view: opening photos, zoom, pan, the history tags with their kept views, the footer naming the image's place in its folder, dimensions, size and name, and the image's Search menu item.
 - `search.go` — the search view: query/scope header with the picture icon that picks a local image as the query, the results grid that loads more as it nears its end, its images' Open and Search menu items, and opening its chosen images.
 - `search_group.go` — the search view's grouped results: a row of one directory's images, ordered by score, that loads a batch as it scrolls sideways.
-- `search_gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`; it searches text only, so image queries report why.
-- `search_sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, embedding a query image when the query is a local image, and indexing folders or images into it or removing them from it.
+- `searcher/files.go` — the image formats the embedding service reads, recognizing a query that names a local image, and listing the images a path's index adds.
+- `searcher/gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`; it searches text only, so image queries report why, and keeps its own index.
+- `searcher/searcher.go` — the `searcher` package: the `Searcher` interface the search view asks, a search page's size, and its results and index progress.
+- `searcher/sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, embedding a query image when the query is a local image, and indexing folders or images into it or removing them from it.
 - `embedding/embedding.go` — the `embedding` package: the embedding service, query text and base64 images in, vectors out, with its address and model.
 - `index.go` — indexing progress and the `Index` and `Index Recursively` context menu items of folders and images.
 - `remove.go` — the `Remove` context menu item: moving folders and images to the trash, taking them out of the index, and refreshing the folders view.
 - `config.go` — `~/.glry/config.json`: cell-size, search, and embedding settings, plus the config view's form.
 - `files.go` — reading folders, listing images, decoding thumbnails, and applying EXIF orientation.
-- `main_test.go` — tests for the views, folder scanning, thumbnails, search, and the single-image view.
-- `index_test.go` — tests for the Index menu items of folders and images.
-- `remove_test.go` — tests for the Remove menu items of folders and images.
-- `select_test.go` — tests for choosing several items in the folders and search grids, and opening or indexing them.
-- `search_sqlite_test.go` — tests for SQLite search and indexing.
-- `search_group_test.go` — tests for grouping the search results by directory, choosing several of them, and loading their rows sideways.
-- `search_gmbd_test.go` — tests for the gmbd search way.
-- `config_test.go` — tests for config parsing, defaults, and saving.
 
 ## Run
 
@@ -39,4 +33,6 @@ go tool mygo build      # writes to ./build
 ```sh
 CGO_ENABLED=0 go test ./...
 go tool mygo vet .
+go tool mygo vet ./embedding
+go tool mygo vet ./searcher
 ```

@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/turnon/glry/embedding"
+	"github.com/turnon/glry/searcher"
 )
 
 func TestLoadConfigCreatesDefaultFile(t *testing.T) {
@@ -122,7 +123,7 @@ func TestSaveConfigAppliesSearchWay(t *testing.T) {
 	if a.configErr != "" {
 		t.Fatalf("saving the config failed: %s", a.configErr)
 	}
-	if _, ok := a.searcher.(sqlite); !ok || a.embed.URL() != "http://example.test/embed" || a.embed.Model() != "m" {
+	if _, ok := a.searcher.(searcher.SQLite); !ok || a.embed.URL() != "http://example.test/embed" || a.embed.Model() != "m" {
 		t.Errorf("the config applied %+v", a.searcher)
 	}
 	if a.cellWidth != 15 || a.cellHeight != 20 {

@@ -41,7 +41,7 @@ func (a *app) beginIndex(target indexTarget) {
 	a.indexSkipped = 0
 	a.indexRunning = true
 	a.indexErr = ""
-	progress, err := a.searcher.index(target.path, target.recursive)
+	progress, err := a.searcher.Index(target.path, target.recursive)
 	if err != nil {
 		a.indexRunning = false
 		a.indexErr = err.Error()
@@ -51,7 +51,7 @@ func (a *app) beginIndex(target indexTarget) {
 	a.async(func() {
 		done := 0
 		for p := range progress {
-			n, total, skipped := p.done, p.total, p.skipped
+			n, total, skipped := p.Done, p.Total, p.Skipped
 			done = n
 			a.post(func() {
 				if gen != a.indexGen {

@@ -12,7 +12,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -121,29 +120,6 @@ func isImageName(name string) bool {
 		return true
 	}
 	return false
-}
-
-// embeddingImageExtensions are the extensions of the images the embedding
-// service reads, for indexing and for a query image. The viewer also shows
-// SVG, which the service cannot read, so indexing leaves it out.
-var embeddingImageExtensions = []string{
-	".jpg", ".jpeg", ".jfif", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif",
-}
-
-// isEmbeddingImageName reports whether a file's extension is a format the
-// embedding service reads.
-func isEmbeddingImageName(name string) bool {
-	return slices.Contains(embeddingImageExtensions, strings.ToLower(filepath.Ext(name)))
-}
-
-// isLocalImageQuery reports whether query names an image file the embedding
-// service reads, which the search embeds instead of searching the text.
-func isLocalImageQuery(query string) bool {
-	if query == "" {
-		return false
-	}
-	info, err := os.Stat(query)
-	return err == nil && !info.IsDir() && isEmbeddingImageName(query)
 }
 
 func isSVG(path string) bool {

@@ -1,4 +1,4 @@
-package main
+package searcher
 
 import (
 	"encoding/json"
@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,18 +15,20 @@ import (
 // The gmbd search way asks the local gmbd service which images match a
 // query, within a folder scope, and shows what it finds.
 const (
-	gmbdEndpoint = "http://localhost:8500"
-	gmbdTimeout  = 20 * time.Second
+	// DefaultGmbdURL is the address of the gmbd service the app starts
+	// with.
+	DefaultGmbdURL = "http://localhost:8500"
+	gmbdTimeout    = 20 * time.Second
 	// gmbdMaxBody bounds the response the view reads, so that a runaway
 	// service cannot exhaust the app's memory.
 	gmbdMaxBody = 8 << 20
 )
 
-// gmbd is the gmbd search way: it asks the gmbd service at url which images
+// Gmbd is the gmbd search way: it asks the gmbd service at URL which images
 // match a query.
-type gmbd struct {
-	// url is the service's address.
-	url string
+type Gmbd struct {
+	// URL is the service's address.
+	URL string
 }
 
 // gmbdSearchResponse mirrors the gmbd service's JSON: the images it found,
@@ -40,16 +41,15 @@ type gmbdSearchResponse struct {
 	Total int `json:"total"`
 }
 
-// search asks the gmbd service at g.url which images match query within
+// Search asks the gmbd service at g.URL which images match query within
 // scope on page, and returns what it found and how many it counted in all.
 // A query naming a local image reports why the gmbd way cannot search by
-// it, as the service embeds text alone. It runs on a goroutine, so the
-// photos it makes are ready for the thumbnails the view asks for.
-func (g gmbd) search(query, scope string, page int) ([]searchResult, int, error) {
+// it, as the service embeds text alone.
+func (g Gmbd) Search(query, scope string, page int) ([]Result, int, error) {
 	if isLocalImageQuery(query) {
 		return nil, 0, fmt.Errorf("the gmbd search way can't search by an image; use the sqlite way")
 	}
-	target, err := url.Parse(strings.TrimSuffix(g.url, "/") + "/search")
+	target, err := url.Parse(strings.TrimSuffix(g.URL, "/") + "/search")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -82,16 +82,16 @@ func (g gmbd) search(query, scope string, page int) ([]searchResult, int, error)
 	if err := json.NewDecoder(io.LimitReader(resp.Body, gmbdMaxBody)).Decode(&out); err != nil {
 		return nil, 0, fmt.Errorf("reading the gmbd service's answer: %w", err)
 	}
-	results := make([]searchResult, 0, len(out.List))
+	results := make([]Result, 0, len(out.List))
 	for _, item := range out.List {
 		if item.Path == "" {
 			continue
 		}
-		p := &photo{path: item.Path, name: filepath.Base(item.Path)}
+		result := Result{Path: item.Path, Score: item.Score}
 		if info, err := os.Stat(item.Path); err == nil {
-			p.size = info.Size()
+			result.Size = info.Size()
 		}
-		results = append(results, searchResult{photo: p, score: item.Score})
+		results = append(results, result)
 	}
 	total := out.Total
 	if total < len(results) {
@@ -100,14 +100,14 @@ func (g gmbd) search(query, scope string, page int) ([]searchResult, int, error)
 	return results, total, nil
 }
 
-// index is not available from the gmbd search way: the service keeps its own
+// Index is not available from the gmbd search way: the service keeps its own
 // index.
-func (g gmbd) index(path string, recursive bool) (chan indexProgress, error) {
+func (g Gmbd) Index(path string, recursive bool) (chan Progress, error) {
 	return nil, fmt.Errorf("the gmbd search way cannot index images")
 }
 
-// remove is not available from the gmbd search way: the service keeps its
+// Remove is not available from the gmbd search way: the service keeps its
 // own index.
-func (g gmbd) remove(path string) error {
+func (g Gmbd) Remove(path string) error {
 	return fmt.Errorf("the gmbd search way cannot remove images from its index")
 }

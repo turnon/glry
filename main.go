@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/turnon/glry/embedding"
+	"github.com/turnon/glry/searcher"
 )
 
 var (
@@ -190,7 +191,7 @@ type app struct {
 	// searchingMore and searchedNoMore tell that another page is on its
 	// way and that the backend has no more. searchScroll keeps the results'
 	// place, and searchGrid and searchChosen are the grid and its choice.
-	searcher   searcher
+	searcher   searcher.Searcher
 	gmbdURL    string
 	sqlitePath string
 
@@ -299,7 +300,7 @@ func newApp(root string) *app {
 		tag:               -1,
 		pendingTag:        -1,
 		tagShown:          -1,
-		gmbdURL:           gmbdEndpoint,
+		gmbdURL:           searcher.DefaultGmbdURL,
 		sqlitePath:        defaultSQLitePath(),
 		embed:             embedding.Default(),
 		searchPage:        1,
@@ -315,7 +316,7 @@ func newApp(root string) *app {
 				Parent:  parent,
 				Title:   "Search by image",
 				Message: "Choose an image to find similar ones",
-				Filters: []mygo.FileFilter{{Name: "Images", Extensions: embeddingImageExtensions}},
+				Filters: []mygo.FileFilter{{Name: "Images", Extensions: searcher.EmbeddingImageExtensions()}},
 			})
 		},
 	}

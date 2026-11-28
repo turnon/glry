@@ -16,6 +16,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/searcher"
 )
 
 // syncApp makes the app do its file work inline, as a test can wait for.
@@ -41,23 +42,23 @@ type pageSearcher struct {
 	queries []string
 }
 
-func (s *pageSearcher) search(query, scope string, page int) ([]searchResult, int, error) {
+func (s *pageSearcher) Search(query, scope string, page int) ([]searcher.Result, int, error) {
 	s.asked = append(s.asked, page)
 	s.queries = append(s.queries, query)
-	var results []searchResult
+	var results []searcher.Result
 	if page >= 1 && page <= len(s.pages) {
 		for _, path := range s.pages[page-1] {
-			results = append(results, searchResult{photo: &photo{path: path, name: filepath.Base(path)}})
+			results = append(results, searcher.Result{Path: path})
 		}
 	}
 	return results, s.total, nil
 }
 
-func (s *pageSearcher) index(path string, recursive bool) (chan indexProgress, error) {
+func (s *pageSearcher) Index(path string, recursive bool) (chan searcher.Progress, error) {
 	return nil, nil
 }
 
-func (s *pageSearcher) remove(path string) error { return nil }
+func (s *pageSearcher) Remove(path string) error { return nil }
 
 func singleViewNow(t *testing.T, a *app) *tagView {
 	t.Helper()

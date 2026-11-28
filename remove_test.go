@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/searcher"
 )
 
 func galleryRightClick(t *testing.T, a *app, tt *ui.Tester, name string) {
@@ -43,7 +44,7 @@ func insertIndexedPaths(t *testing.T, dbPath string, paths ...string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	vector := make([]float32, sqliteVectorDims)
+	vector := make([]float32, searcher.VectorDims)
 	vector[0] = 1
 	for _, path := range paths {
 		if _, err := db.Exec(`insert into images(name, dir, digest, vector) values (?, ?, ?, ?)`,

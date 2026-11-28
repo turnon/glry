@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/searcher"
 )
 
 // scoredSearcher serves pages of results as given, and records the pages
@@ -19,19 +20,23 @@ type scoredSearcher struct {
 	asked []int
 }
 
-func (s *scoredSearcher) search(query, scope string, page int) ([]searchResult, int, error) {
+func (s *scoredSearcher) Search(query, scope string, page int) ([]searcher.Result, int, error) {
 	s.asked = append(s.asked, page)
 	if page < 1 || page > len(s.pages) {
 		return nil, s.total, nil
 	}
-	return s.pages[page-1], s.total, nil
+	results := make([]searcher.Result, 0, len(s.pages[page-1]))
+	for _, result := range s.pages[page-1] {
+		results = append(results, searcher.Result{Path: result.photo.path, Score: result.score})
+	}
+	return results, s.total, nil
 }
 
-func (s *scoredSearcher) index(path string, recursive bool) (chan indexProgress, error) {
+func (s *scoredSearcher) Index(path string, recursive bool) (chan searcher.Progress, error) {
 	return nil, nil
 }
 
-func (s *scoredSearcher) remove(path string) error { return nil }
+func (s *scoredSearcher) Remove(path string) error { return nil }
 
 // result is an image of dir with a score, as a search result.
 func result(dir, name string, score float64) searchResult {

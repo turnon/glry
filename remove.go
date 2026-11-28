@@ -96,7 +96,7 @@ func (a *app) startRemove(c *ui.Context, targets []removeTarget) {
 			if searcher == nil {
 				continue
 			}
-			if rerr := searcher.remove(target.path); rerr != nil && err == nil {
+			if rerr := searcher.Remove(target.path); rerr != nil && err == nil {
 				err = rerr
 			}
 		}
