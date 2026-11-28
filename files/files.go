@@ -1,4 +1,5 @@
-package main
+// Package files scans folders for images and decodes their thumbnails.
+package files
 
 import (
 	"bytes"
@@ -20,9 +21,17 @@ import (
 	_ "golang.org/x/image/webp" // image.Decode
 )
 
-// scanDirs lists a directory's visible subdirectories, sorted by name.
+// Image is an image a folder holds: its path, its base name and its size in
+// bytes. Decoding its thumbnail and caching it are the caller's.
+type Image struct {
+	Path string
+	Name string
+	Size int64
+}
+
+// ScanDirs lists a directory's visible subdirectories, sorted by name.
 // It returns nil for a directory without any.
-func scanDirs(dir string) ([]string, error) {
+func ScanDirs(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -34,24 +43,22 @@ func scanDirs(dir string) ([]string, error) {
 		}
 		dirs = append(dirs, filepath.Join(dir, e.Name()))
 	}
-	sort.Slice(dirs, func(i, j int) bool {
-		return strings.ToLower(rootName(dirs[i])) < strings.ToLower(rootName(dirs[j]))
-	})
+	sortByDirName(dirs)
 	if len(dirs) == 0 {
 		return nil, nil
 	}
 	return dirs, nil
 }
 
-// scanFolder lists a directory's visible subdirectories and images,
-// each sorted by name, for the tree and the folders view in one read.
-func scanFolder(dir string) ([]string, []*photo, error) {
+// ScanFolder lists a directory's visible subdirectories and images, each
+// sorted by name, in one read.
+func ScanFolder(dir string) ([]string, []Image, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, err
 	}
 	dirs := make([]string, 0, len(entries))
-	photos := make([]*photo, 0, len(entries))
+	images := make([]Image, 0, len(entries))
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
@@ -60,61 +67,66 @@ func scanFolder(dir string) ([]string, []*photo, error) {
 			dirs = append(dirs, filepath.Join(dir, e.Name()))
 			continue
 		}
-		if !isImageName(e.Name()) {
+		if !IsImageName(e.Name()) {
 			continue
 		}
 		var size int64
 		if info, err := e.Info(); err == nil {
 			size = info.Size()
 		}
-		photos = append(photos, &photo{
-			path: filepath.Join(dir, e.Name()),
-			name: e.Name(),
-			size: size,
+		images = append(images, Image{
+			Path: filepath.Join(dir, e.Name()),
+			Name: e.Name(),
+			Size: size,
 		})
 	}
-	sort.Slice(dirs, func(i, j int) bool {
-		return strings.ToLower(rootName(dirs[i])) < strings.ToLower(rootName(dirs[j]))
-	})
-	sort.Slice(photos, func(i, j int) bool {
-		return strings.ToLower(photos[i].name) < strings.ToLower(photos[j].name)
+	sortByDirName(dirs)
+	sort.Slice(images, func(i, j int) bool {
+		return strings.ToLower(images[i].Name) < strings.ToLower(images[j].Name)
 	})
 	if len(dirs) == 0 {
 		dirs = nil
 	}
-	return dirs, photos, nil
+	return dirs, images, nil
 }
 
-// scanImages lists the images in a directory, sorted by name.
-func scanImages(dir string) ([]*photo, error) {
+// ScanImages lists the images in a directory, sorted by name.
+func ScanImages(dir string) ([]Image, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	photos := make([]*photo, 0, len(entries))
+	images := make([]Image, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || !isImageName(e.Name()) {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || !IsImageName(e.Name()) {
 			continue
 		}
 		var size int64
 		if info, err := e.Info(); err == nil {
 			size = info.Size()
 		}
-		photos = append(photos, &photo{
-			path: filepath.Join(dir, e.Name()),
-			name: e.Name(),
-			size: size,
+		images = append(images, Image{
+			Path: filepath.Join(dir, e.Name()),
+			Name: e.Name(),
+			Size: size,
 		})
 	}
-	sort.Slice(photos, func(i, j int) bool {
-		return strings.ToLower(photos[i].name) < strings.ToLower(photos[j].name)
+	sort.Slice(images, func(i, j int) bool {
+		return strings.ToLower(images[i].Name) < strings.ToLower(images[j].Name)
 	})
-	return photos, nil
+	return images, nil
 }
 
-// isImageName reports whether a file's extension is one of the formats
-// DecodeImage and decodeThumb read.
-func isImageName(name string) bool {
+// sortByDirName sorts directory paths by their last element, ignoring case.
+func sortByDirName(dirs []string) {
+	sort.Slice(dirs, func(i, j int) bool {
+		return strings.ToLower(filepath.Base(dirs[i])) < strings.ToLower(filepath.Base(dirs[j]))
+	})
+}
+
+// IsImageName reports whether a file's extension is one of the formats
+// DecodeThumb reads.
+func IsImageName(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".png", ".jpg", ".jpeg", ".jfif", ".gif", ".webp", ".bmp", ".svg":
 		return true
@@ -122,16 +134,17 @@ func isImageName(name string) bool {
 	return false
 }
 
-func isSVG(path string) bool {
+// IsSVG reports whether a path names an SVG image.
+func IsSVG(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".svg")
 }
 
-// decodeThumb decodes an image and scales it down to fit maxPixels on its
+// DecodeThumb decodes an image and scales it down to fit maxPixels on its
 // longest side, applying a JPEG's EXIF orientation. It returns the
 // thumbnail, and the original's width and height as they show. The
 // thumbnail is an RGBA image of its own, made on a goroutine, which
 // ui.NewBitmap can take without a copy on the main thread.
-func decodeThumb(data []byte, maxPixels int) (image.Image, int, int, error) {
+func DecodeThumb(data []byte, maxPixels int) (image.Image, int, int, error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, err

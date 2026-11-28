@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/turnon/glry/files"
 )
 
 // The single image view zooms its photo from fitting its box to
@@ -145,11 +146,12 @@ func (a *app) loadSingleDir(dir string) {
 	a.singleDirGen++
 	gen := a.singleDirGen
 	a.async(func() {
-		photos, err := scanImages(dir)
+		entries, err := files.ScanImages(dir)
 		if err != nil {
 			log.Printf("reading %s: %v", dir, err)
 			return
 		}
+		photos := photoEntries(entries)
 		a.post(func() {
 			if gen != a.singleDirGen {
 				return // another directory's images were asked meanwhile
@@ -830,7 +832,7 @@ func (a *app) loadSingle() {
 		data, rerr := os.ReadFile(path)
 		if rerr != nil {
 			err = rerr
-		} else if isSVG(path) {
+		} else if files.IsSVG(path) {
 			svg, err = ui.ParseSVG(data)
 			if err == nil {
 				if w, h := ui.ImageSize(svg); w > 0 && h > 0 {
@@ -838,7 +840,7 @@ func (a *app) loadSingle() {
 				}
 			}
 		} else {
-			img, width, height, err = decodeThumb(data, singleMaxPixels)
+			img, width, height, err = files.DecodeThumb(data, singleMaxPixels)
 		}
 		a.post(func() {
 			if gen != a.singleGen {

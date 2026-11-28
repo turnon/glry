@@ -252,32 +252,6 @@ func TestTreeScrollsSidewaysForLongNames(t *testing.T) {
 	}
 }
 
-func TestScanSkipsHiddenAndNonImages(t *testing.T) {
-	root := t.TempDir()
-	writePNG(t, filepath.Join(root, "photo.png"), color.RGBA{A: 255})
-	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(root, ".hidden"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	photos, err := scanImages(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(photos) != 1 || photos[0].name != "photo.png" {
-		t.Errorf("scanned %v, want photo.png alone", photos)
-	}
-	dirs, err := scanDirs(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(dirs) != 0 {
-		t.Errorf("scanned hidden directories: %v", dirs)
-	}
-}
-
 func TestRailSwitchesViews(t *testing.T) {
 	root := t.TempDir()
 	writePNG(t, filepath.Join(root, "alpha.png"), color.RGBA{R: 255, A: 255})

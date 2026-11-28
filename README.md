@@ -4,7 +4,7 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 
 ## Files
 
-- `main.go` — app state and startup: the rail and view switching, tree scanning, folder loading, thumbnails, and the window.
+- `main.go` — app state and startup: the rail and view switching, the folder tree, loading folders and decoding thumbnails through the `files` package, and the window.
 - `folders.go` — the folders view: the sidebar's outline rows and the selected folder's grid of folder and photo cells, with their selection, the image count tag, and an image's Search, Index and Remove menu items.
 - `select.go` — choosing several items in the folders and search grids: Cmd-click, Shift-click, and dragging a rectangle over them.
 - `single.go` — the single-image view: opening photos, zoom, pan, the history tags with their kept views, the footer naming the image's place in its folder, dimensions, size and name, and the image's Search menu item.
@@ -15,10 +15,10 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `searcher/searcher.go` — the `searcher` package: the `Searcher` interface the search view asks, a search page's size, and its results and index progress.
 - `searcher/sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, embedding a query image when the query is a local image, and indexing folders or images into it or removing them from it.
 - `embedding/embedding.go` — the `embedding` package: the embedding service, query text and base64 images in, vectors out, with its address and model.
+- `files/files.go` — the `files` package: reading folders, listing images, decoding thumbnails, and applying EXIF orientation.
 - `index.go` — indexing progress and the `Index` and `Index Recursively` context menu items of folders and images.
 - `remove.go` — the `Remove` context menu item: moving folders and images to the trash, taking them out of the index, and refreshing the folders view.
 - `config.go` — `~/.glry/config.json`: cell-size, search, and embedding settings, plus the config view's form.
-- `files.go` — reading folders, listing images, decoding thumbnails, and applying EXIF orientation.
 
 ## Run
 
@@ -33,6 +33,7 @@ go tool mygo build      # writes to ./build
 ```sh
 CGO_ENABLED=0 go test ./...
 go tool mygo vet .
+go tool mygo vet ./files
 go tool mygo vet ./embedding
 go tool mygo vet ./searcher
 ```

@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/turnon/glry/embedding"
+	"github.com/turnon/glry/files"
 	"github.com/turnon/glry/searcher"
 )
 
@@ -394,7 +395,7 @@ func (a *app) loadChildren(dir string) {
 	}
 	a.dirsLoading[dir] = true
 	a.async(func() {
-		kids, err := scanDirs(dir)
+		kids, err := files.ScanDirs(dir)
 		if err != nil {
 			log.Printf("reading %s: %v", dir, err)
 			kids = nil
@@ -492,7 +493,8 @@ func (a *app) loadImages() {
 	a.single = 0
 	a.clearSingle()
 	a.async(func() {
-		dirs, photos, err := scanFolder(dir)
+		dirs, entries, err := files.ScanFolder(dir)
+		photos := photoEntries(entries)
 		a.post(func() {
 			if gen != a.foldersGen {
 				return // another folder was chosen meanwhile
@@ -535,6 +537,15 @@ func (a *app) loadImages() {
 	})
 }
 
+// photoEntries makes photos of a folder's scanned images.
+func photoEntries(entries []files.Image) []*photo {
+	photos := make([]*photo, 0, len(entries))
+	for _, e := range entries {
+		photos = append(photos, &photo{path: e.Path, name: e.Name, size: e.Size})
+	}
+	return photos
+}
+
 // buildFolderItems puts the selected folder's subdirectories before its
 // images.
 func (a *app) buildFolderItems() {
@@ -573,7 +584,7 @@ func (a *app) requestThumb(valid func() bool, p *photo) {
 		data, rerr := os.ReadFile(path)
 		if rerr != nil {
 			err = rerr
-		} else if isSVG(path) {
+		} else if files.IsSVG(path) {
 			svg, err = ui.ParseSVG(data)
 			if err == nil {
 				if w, h := ui.ImageSize(svg); w > 0 && h > 0 {
@@ -581,7 +592,7 @@ func (a *app) requestThumb(valid func() bool, p *photo) {
 				}
 			}
 		} else {
-			img, width, height, err = decodeThumb(data, thumbMaxPixels)
+			img, width, height, err = files.DecodeThumb(data, thumbMaxPixels)
 		}
 		a.post(func() {
 			if !valid() {
