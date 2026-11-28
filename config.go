@@ -21,12 +21,14 @@ const (
 )
 
 // searchWay is how the search view finds images: through gmbd's HTTP
-// service, or through the SQLite vector database the app owns.
+// service, through the SQLite vector database the app owns, or through a
+// PostgreSQL database with pgvector.
 type searchWay string
 
 const (
-	searchWayGmbd   searchWay = "gmbd"
-	searchWaySQLite searchWay = "sqlite"
+	searchWayGmbd       searchWay = "gmbd"
+	searchWaySQLite     searchWay = "sqlite"
+	searchWayPostgresql searchWay = "postgresql"
 )
 
 // parseSearchWay reads a search.way value. An empty value is gmbd, so a
@@ -37,15 +39,19 @@ func parseSearchWay(s string) (searchWay, error) {
 		return searchWayGmbd, nil
 	case searchWaySQLite:
 		return searchWaySQLite, nil
+	case searchWayPostgresql:
+		return searchWayPostgresql, nil
 	}
-	return "", fmt.Errorf(`search.way must be "gmbd" or "sqlite"`)
+	return "", fmt.Errorf(`search.way must be "gmbd", "sqlite" or "postgresql"`)
 }
 
 // settings is what the config file holds, once read: the size of a grid
-// cell, how the search view finds images, and the embedding service.
+// cell, how the search view finds images, the backends it can choose from,
+// and the embedding service.
 type settings struct {
 	cell      cellSize
 	searchWay searchWay
+	backends  []searchBackend
 	embed     embedding.EmbedConfig
 }
 
@@ -81,10 +87,63 @@ type cellConfig struct {
 }
 
 // searchConfig chooses how the search view finds images. The embed config
-// beside it names the service that turns a query into the vector the
-// sqlite way matches.
+// beside it names the service that turns a query into the vector the sqlite
+// and postgresql ways match. backends names what each way needs: the
+// postgresql way's entry holds its DSN.
 type searchConfig struct {
+	Way      string          `json:"way"`
+	Backends []searchBackend `json:"backends,omitempty"`
+}
+
+// searchBackend is one entry of search.backends: the way it serves, and the
+// DSN the postgresql way connects with.
+type searchBackend struct {
 	Way string `json:"way"`
+	DSN string `json:"dsn,omitempty"`
+}
+
+// postgresDSN returns the DSN of the postgresql backend in backends, which
+// the postgresql search way needs.
+func postgresDSN(backends []searchBackend) (string, error) {
+	for _, backend := range backends {
+		if !strings.EqualFold(strings.TrimSpace(backend.Way), string(searchWayPostgresql)) {
+			continue
+		}
+		dsn := strings.TrimSpace(backend.DSN)
+		if dsn == "" {
+			return "", fmt.Errorf(`the postgresql backend in search.backends needs a "dsn"`)
+		}
+		return dsn, nil
+	}
+	return "", fmt.Errorf(`search.way is "postgresql", so search.backends must hold {"way": "postgresql", "dsn": "..."}`)
+}
+
+// postgresBackend returns the postgresql entry of backends, adding one the
+// form can fill when it is missing.
+func postgresBackend(backends *[]searchBackend) *searchBackend {
+	for i := range *backends {
+		if strings.EqualFold(strings.TrimSpace((*backends)[i].Way), string(searchWayPostgresql)) {
+			(*backends)[i].Way = string(searchWayPostgresql)
+			return &(*backends)[i]
+		}
+	}
+	*backends = append(*backends, searchBackend{Way: string(searchWayPostgresql)})
+	return &(*backends)[len(*backends)-1]
+}
+
+// savedBackends returns the backends to write: a postgresql entry without a
+// DSN is left out unless the postgresql way needs it, which the save has
+// already refused.
+func savedBackends(way searchWay, backends []searchBackend) []searchBackend {
+	kept := make([]searchBackend, 0, len(backends))
+	for _, backend := range backends {
+		postgres := strings.EqualFold(strings.TrimSpace(backend.Way), string(searchWayPostgresql))
+		if postgres && strings.TrimSpace(backend.DSN) == "" && way != searchWayPostgresql {
+			continue
+		}
+		kept = append(kept, searchBackend{Way: backend.Way, DSN: strings.TrimSpace(backend.DSN)})
+	}
+	return kept
 }
 
 func defaultConfigFile() configFile {
@@ -154,10 +213,19 @@ func loadConfig(path string) settings {
 	}
 	if cfg.Search.Way != "" {
 		if way, err := parseSearchWay(cfg.Search.Way); err == nil {
-			s.searchWay = way
+			if way != searchWayPostgresql {
+				s.searchWay = way
+			} else if _, err := postgresDSN(cfg.Search.Backends); err != nil {
+				log.Printf("%s: %v", path, err)
+			} else {
+				s.searchWay = way
+			}
 		} else {
 			log.Printf("%s: %v", path, err)
 		}
+	}
+	if len(cfg.Search.Backends) > 0 {
+		s.backends = cfg.Search.Backends
 	}
 	if cfg.Embed.URL != "" {
 		s.embed.URL = strings.TrimSpace(cfg.Embed.URL)
@@ -214,6 +282,10 @@ func (a *app) loadSettings(path string) {
 	a.configPath = path
 	s := loadConfig(path)
 	a.setCellSize(s.cell)
+	a.pgDSN = ""
+	if s.searchWay == searchWayPostgresql {
+		a.pgDSN, _ = postgresDSN(s.backends)
+	}
 	a.setSearcher(s.searchWay)
 	a.embed.SetConfig(s.embed)
 	a.config = configFile{
@@ -221,7 +293,7 @@ func (a *app) loadSettings(path string) {
 			Width:  formatPixels(s.cell.width),
 			Height: formatPixels(s.cell.height),
 		},
-		Search: searchConfig{Way: string(s.searchWay)},
+		Search: searchConfig{Way: string(s.searchWay), Backends: s.backends},
 		Embed:  a.embed.Config(),
 	}
 	a.configErr = ""
@@ -274,8 +346,16 @@ func (a *app) configView(c *ui.Context) {
 				})
 				configSection(c, "Search", func() {
 					ui.Field(c, "Way", func() {
-						ui.Select(c, &a.config.Search.Way, []string{string(searchWayGmbd), string(searchWaySQLite)}).FillWidth().MaxWidth(150).OnChange(edited)
+						ui.Select(c, &a.config.Search.Way, []string{string(searchWayGmbd), string(searchWaySQLite), string(searchWayPostgresql)}).FillWidth().MaxWidth(150).OnChange(edited)
 					})
+					// Only the postgresql way connects with a DSN, so the
+					// field shows for it alone.
+					if way, err := parseSearchWay(a.config.Search.Way); err == nil && way == searchWayPostgresql {
+						pg := postgresBackend(&a.config.Search.Backends)
+						ui.Field(c, "DSN", func() {
+							ui.TextInput(c, &pg.DSN).Placeholder("postgres://user:password@host:5432/dbname").FillWidth().OnChange(edited)
+						})
+					}
 				})
 				configSection(c, "Embedding", func() {
 					ui.Field(c, "URL", func() {
@@ -330,6 +410,16 @@ func (a *app) saveConfig() {
 		a.configErr = "search.way: " + err.Error()
 		return
 	}
+	backends := savedBackends(way, a.config.Search.Backends)
+	a.pgDSN = ""
+	if way == searchWayPostgresql {
+		dsn, err := postgresDSN(backends)
+		if err != nil {
+			a.configErr = "search.backends: " + err.Error()
+			return
+		}
+		a.pgDSN = dsn
+	}
 	a.embed.SetConfig(a.config.Embed)
 
 	cfg := configFile{
@@ -337,7 +427,7 @@ func (a *app) saveConfig() {
 			Width:  formatPixels(width),
 			Height: formatPixels(height),
 		},
-		Search: searchConfig{Way: string(way)},
+		Search: searchConfig{Way: string(way), Backends: backends},
 		Embed:  a.embed.Config(),
 	}
 	a.config = cfg

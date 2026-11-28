@@ -469,17 +469,25 @@ func asSearchResults(results []searcher.Result) []searchResult {
 
 // setSearcher chooses the backend the search asks, from the configured way.
 func (a *app) setSearcher(way searchWay) {
-	a.searchScoreAsc = way == searchWaySQLite
-	if way == searchWaySQLite {
+	a.searchScoreAsc = way == searchWaySQLite || way == searchWayPostgresql
+	switch way {
+	case searchWaySQLite:
 		a.searcher = searcher.SQLite{
 			Path:        a.sqlitePath,
 			EmbedQuery:  a.embed.Query,
 			EmbedImages: a.embed.Images,
 			OnError:     a.indexFailed,
 		}
-		return
+	case searchWayPostgresql:
+		a.searcher = searcher.Postgres{
+			DSN:         a.pgDSN,
+			EmbedQuery:  a.embed.Query,
+			EmbedImages: a.embed.Images,
+			OnError:     a.indexFailed,
+		}
+	default:
+		a.searcher = searcher.Gmbd{URL: a.gmbdURL}
 	}
-	a.searcher = searcher.Gmbd{URL: a.gmbdURL}
 }
 
 // runSearch asks the chosen backend for the images matching the query

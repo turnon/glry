@@ -101,12 +101,93 @@ func TestParseSearchWay(t *testing.T) {
 		{"", searchWayGmbd, true},
 		{"gmbd", searchWayGmbd, true},
 		{" SQLITE ", searchWaySQLite, true},
+		{"PostgreSQL", searchWayPostgresql, true},
 		{"other", "", false},
 	} {
 		got, err := parseSearchWay(tc.in)
 		if (err == nil) != tc.ok || (tc.ok && got != tc.want) {
 			t.Errorf("parseSearchWay(%q) = %q, %v, want %q, ok %v", tc.in, got, err, tc.want, tc.ok)
 		}
+	}
+}
+
+func TestLoadConfigReadsPostgresqlBackend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := `{"search":{"way":"postgresql","backends":[{"way":"postgresql","dsn":"postgres://example.test/glry"}]}}`
+	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := loadConfig(path)
+	if settings.searchWay != searchWayPostgresql {
+		t.Errorf("search way is %q, want postgresql", settings.searchWay)
+	}
+	dsn, err := postgresDSN(settings.backends)
+	if err != nil || dsn != "postgres://example.test/glry" {
+		t.Errorf("the backend DSN is %q, %v, want postgres://example.test/glry", dsn, err)
+	}
+}
+
+// A postgresql search way without a filled backend falls back to gmbd
+// rather than searching a database it does not name.
+func TestLoadConfigPostgresqlWithoutDSNUsesGmbd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := `{"search":{"way":"postgresql","backends":[{"way":"postgresql","dsn":""}]}}`
+	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if settings := loadConfig(path); settings.searchWay != searchWayGmbd {
+		t.Errorf("search way is %q, want gmbd", settings.searchWay)
+	}
+}
+
+func TestSaveConfigAppliesPostgresqlBackend(t *testing.T) {
+	a := syncApp(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	a.configPath = path
+	a.config = configFile{
+		Cell: cellConfig{Height: "20px", Width: "15px"},
+		Search: searchConfig{
+			Way:      "postgresql",
+			Backends: []searchBackend{{Way: "postgresql", DSN: "postgres://example.test/glry"}},
+		},
+	}
+	a.saveConfig()
+	if a.configErr != "" {
+		t.Fatalf("saving the config failed: %s", a.configErr)
+	}
+	pg, ok := a.searcher.(searcher.Postgres)
+	if !ok || pg.DSN != "postgres://example.test/glry" {
+		t.Errorf("the config applied %+v, want the postgresql backend's DSN", a.searcher)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the config was not written: %v", err)
+	}
+	var cfg configFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("the saved config is not JSON: %v\n%s", err, data)
+	}
+	want := searchBackend{Way: "postgresql", DSN: "postgres://example.test/glry"}
+	if cfg.Search.Way != "postgresql" || len(cfg.Search.Backends) != 1 || cfg.Search.Backends[0] != want {
+		t.Errorf("the saved config is %+v, want the postgresql backend", cfg.Search)
+	}
+}
+
+// The postgresql way needs its backend's DSN filled, and a save without one
+// says so rather than writing a config that cannot search.
+func TestSaveConfigRejectsPostgresqlWithoutDSN(t *testing.T) {
+	a := syncApp(t.TempDir())
+	a.configPath = filepath.Join(t.TempDir(), "config.json")
+	a.config = configFile{
+		Cell:   cellConfig{Height: "20px", Width: "15px"},
+		Search: searchConfig{Way: "postgresql", Backends: []searchBackend{{Way: "postgresql"}}},
+	}
+	a.saveConfig()
+	if a.configErr != `search.backends: the postgresql backend in search.backends needs a "dsn"` {
+		t.Errorf("the config error is %q", a.configErr)
+	}
+	if a.configStatus != "" {
+		t.Errorf("a rejected config reports %q", a.configStatus)
 	}
 }
 
@@ -190,6 +271,30 @@ func TestConfigViewEditsTheForm(t *testing.T) {
 	var cfg configFile
 	if err := json.Unmarshal(data, &cfg); err != nil || cfg.Cell.Width != "20px" {
 		t.Errorf("the saved config is %+v, %v\n%s", cfg, err, data)
+	}
+}
+
+// The DSN field belongs to the postgresql way alone: the other ways have
+// no database to connect to.
+func TestConfigShowsDSNForPostgresqlOnly(t *testing.T) {
+	a := syncApp(t.TempDir())
+	a.loadSettings(filepath.Join(t.TempDir(), "config.json"))
+	a.showConfig()
+	tt := ui.NewTester(a.view, 900, 600)
+
+	if _, ok := tt.Find("DSN"); ok {
+		t.Fatalf("the gmbd way shows the DSN field: %q", tt.Texts())
+	}
+	a.config.Search.Way = "sqlite"
+	tt.Frame()
+	if _, ok := tt.Find("DSN"); ok {
+		t.Errorf("the sqlite way shows the DSN field: %q", tt.Texts())
+	}
+
+	a.config.Search.Way = "postgresql"
+	tt.Frame()
+	if _, ok := tt.Find("DSN"); !ok {
+		t.Errorf("the postgresql way hides the DSN field: %q", tt.Texts())
 	}
 }
 

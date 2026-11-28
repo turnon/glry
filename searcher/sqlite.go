@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -84,34 +83,11 @@ func (s SQLite) Search(query, scope string, page int) ([]Result, int, error) {
 	if err := s.EnsureDB(); err != nil {
 		return nil, 0, err
 	}
-	vector, err := s.queryVector(query)
+	vector, err := queryVector(query, s.EmbedQuery, s.EmbedImages)
 	if err != nil {
 		return nil, 0, err
 	}
 	return s.searchVector(vector, scope, page)
-}
-
-// queryVector embeds query: the local image it names, else its text with the
-// prefix the model expects for a search.
-func (s SQLite) queryVector(query string) ([]float32, error) {
-	if !isLocalImageQuery(query) {
-		return s.EmbedQuery(query)
-	}
-	if s.EmbedImages == nil {
-		return nil, fmt.Errorf("searching by image needs an embedding service")
-	}
-	data, err := os.ReadFile(query)
-	if err != nil {
-		return nil, fmt.Errorf("reading the query image %s: %w", query, err)
-	}
-	vectors, err := s.EmbedImages(base64.StdEncoding.EncodeToString(data))
-	if err != nil {
-		return nil, fmt.Errorf("embedding the query image %s: %w", query, err)
-	}
-	if len(vectors) == 0 {
-		return nil, fmt.Errorf("the embedding service returned no embedding for %s", query)
-	}
-	return vectors[0], nil
 }
 
 // searchVector ranks the images nearest vector within scope and returns the
@@ -128,7 +104,7 @@ func (s SQLite) searchVector(vector []float32, scope string, page int) ([]Result
 	// shows. A KNN query filters vec0 metadata with = or in only, so the
 	// scope's expression is matched here, over the dirs of the whole table,
 	// in the same pass that counts their images.
-	match, err := s.scopeMatch(scope)
+	match, err := scopeMatch(scope)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -174,19 +150,6 @@ func (s SQLite) searchVector(vector []float32, scope string, page int) ([]Result
 		results = results[:PageSize]
 	}
 	return results, total, nil
-}
-
-// scopeMatch compiles a scope into a matcher for a dir, using the scope as
-// the regular expression gmbd's scope was, or returns nil for no scope.
-func (s SQLite) scopeMatch(scope string) (func(string) bool, error) {
-	if scope == "" {
-		return nil, nil
-	}
-	expression, err := regexp.Compile(scope)
-	if err != nil {
-		return nil, fmt.Errorf("the scope %q is not a regular expression: %w", scope, err)
-	}
-	return expression.MatchString, nil
 }
 
 // scope counts the images in scope and lists the dirs it matches. A scope
@@ -397,12 +360,12 @@ func (s SQLite) Index(path string, recursive bool) (chan Progress, error) {
 		defer db.Close()
 		paths, err := indexImages(path, info.IsDir(), recursive)
 		if err != nil {
-			s.indexFailed(path, err)
+			indexFailed(path, err, s.OnError)
 			return
 		}
 		progress <- Progress{Total: len(paths)}
 		if err := s.indexFiles(db, paths, progress); err != nil {
-			s.indexFailed(path, err)
+			indexFailed(path, err, s.OnError)
 		}
 	}()
 	return progress, nil
@@ -428,15 +391,6 @@ func (s SQLite) Remove(path string) error {
 		return fmt.Errorf("removing %s from %s: %w", path, s.Path, err)
 	}
 	return nil
-}
-
-// indexFailed logs why indexing path stopped and reports it, when the app
-// asked for that.
-func (s SQLite) indexFailed(path string, err error) {
-	log.Printf("indexing %s: %v", path, err)
-	if s.OnError != nil {
-		s.OnError(err)
-	}
 }
 
 // indexFiles adds paths to the database, embedding the images the database

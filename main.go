@@ -183,9 +183,10 @@ type app struct {
 	tagsRef    ui.Handle
 	tagShown   int
 
-	// searcher is the backend the search view asks: gmbd's HTTP service or
-	// the SQLite vector database. gmbdURL is that service's address, and
-	// sqlitePath the database. searchQuery and searchScope are the search's
+	// searcher is the backend the search view asks: gmbd's HTTP service, the
+	// SQLite vector database, or the PostgreSQL vector database. gmbdURL is
+	// that service's address, sqlitePath the SQLite database, and pgDSN the
+	// PostgreSQL database's DSN. searchQuery and searchScope are the search's
 	// inputs, and searchPage the page it asks next. searchResults is what the
 	// search has found so far, with searchTotal how many it counted in all,
 	// and searchGen tells the answer of a search run meanwhile to drop.
@@ -195,6 +196,7 @@ type app struct {
 	searcher   searcher.Searcher
 	gmbdURL    string
 	sqlitePath string
+	pgDSN      string
 
 	// embed is the service that embeds a search query or the images the
 	// sqlite way indexes.

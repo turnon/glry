@@ -14,11 +14,12 @@ A read-only image browser built with [MyGo](https://github.com/egoist/mygo) nati
 - `searcher/gmbd.go` — the `gmbd` search way: the HTTP request to the gmbd service at `http://localhost:8500`; it searches text only, so image queries report why, and keeps its own index.
 - `searcher/searcher.go` — the `searcher` package: the `Searcher` interface the search view asks, a search page's size, and its results and index progress.
 - `searcher/sqlite.go` — the `sqlite` search way: the sqlite-vec database at `~/.glry/db.sqlite`, the nearest-image queries, embedding a query image when the query is a local image, and indexing folders or images into it or removing them from it.
+- `searcher/pg.go` — the `postgresql` search way: the pgvector database its DSN names, the nearest-image queries, and the same indexing and removal as the sqlite way, for an index shared between machines.
 - `embedding/embedding.go` — the `embedding` package: the embedding service, query text and base64 images in, vectors out, with its address and model.
 - `files/files.go` — the `files` package: reading folders, listing images, decoding thumbnails, and applying EXIF orientation.
 - `index.go` — indexing progress and the `Index` and `Index Recursively` context menu items of folders and images.
 - `remove.go` — the `Remove` context menu item: moving folders and images to the trash, taking them out of the index, and refreshing the folders view.
-- `config.go` — `~/.glry/config.json`: cell-size, search, and embedding settings, plus the config view's form.
+- `config.go` — `~/.glry/config.json`: cell-size, search, and embedding settings, plus the config view's form. The search way is `gmbd`, `sqlite` or `postgresql`; the postgresql way adds `{"way": "postgresql", "dsn": "…"}` to `search.backends`.
 
 ## Run
 
@@ -32,8 +33,11 @@ go tool mygo build      # writes to ./build
 
 ```sh
 CGO_ENABLED=0 go test ./...
+GLRY_TEST_POSTGRES_DSN=postgres://user:pass@host:5432/db go test ./searcher
 go tool mygo vet .
 go tool mygo vet ./files
 go tool mygo vet ./embedding
 go tool mygo vet ./searcher
 ```
+
+The postgresql tests skip without `GLRY_TEST_POSTGRES_DSN`; each one creates a schema of its own and drops it again.
